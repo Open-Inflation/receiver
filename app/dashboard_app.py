@@ -592,7 +592,7 @@ DASHBOARD_HTML = """<!doctype html>
 
     function appendLogLines(lines) {
       if (!Array.isArray(lines) || !lines.length) return;
-      const chunk = `${lines.join('\n')}\n`;
+      const chunk = `${lines.join('\\n')}\\n`;
       runLogOutputEl.textContent += chunk;
       runLogOutputEl.scrollTop = runLogOutputEl.scrollHeight;
     }
