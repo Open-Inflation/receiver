@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.dashboard_app import create_dashboard_app
+from app.models import CrawlTask, Orchestrator, TaskRun
+from app.services.scheduler import utcnow
 
 
-def _settings(tmp_path: Path) -> Settings:
+def _settings(tmp_path: Path, *, ws_password: str | None = None) -> Settings:
     return Settings(
         database_url=f"sqlite:///{tmp_path / 'dashboard-test.sqlite3'}",
         storage_base_url="http://127.0.0.1:9999",
         storage_api_token="test-token",
         parser_src_path=(Path(__file__).resolve().parents[2] / "parser" / "src"),
         lease_ttl_minutes=30,
+        orchestrator_ws_url="ws://127.0.0.1:8765",
+        orchestrator_ws_password=ws_password,
     )
 
 
@@ -67,3 +72,105 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
             },
         )
         assert forbidden_update.status_code == 422
+
+
+class _FakeParserSocket:
+    def __init__(self) -> None:
+        self.closed = False
+        self.sent_payloads: list[str] = []
+        self._responses = [
+            json.dumps(
+                {
+                    "ok": True,
+                    "action": "stream_job_log",
+                    "event": "snapshot",
+                    "job_id": "job-123",
+                    "status": "running",
+                    "lines": ["line-a", "line-b"],
+                }
+            ),
+            json.dumps(
+                {
+                    "ok": True,
+                    "action": "stream_job_log",
+                    "event": "end",
+                    "job_id": "job-123",
+                    "status": "success",
+                }
+            ),
+        ]
+
+    async def send(self, payload: str) -> None:
+        self.sent_payloads.append(payload)
+
+    async def recv(self) -> str:
+        assert self._responses, "No fake stream payloads left"
+        return self._responses.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
+    app = create_dashboard_app(_settings(tmp_path, ws_password="top-secret"))
+    fake_socket = _FakeParserSocket()
+
+    async def _fake_connect_orchestrator_ws(url: str):
+        assert url == "ws://127.0.0.1:8765"
+        return fake_socket
+
+    monkeypatch.setattr("app.dashboard_app._connect_orchestrator_ws", _fake_connect_orchestrator_ws)
+
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        task = CrawlTask(
+            city="Moscow",
+            store="C777",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        orchestrator = Orchestrator(
+            id="o" * 32,
+            name="parser-ws",
+            token="t" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        session.add(task)
+        session.add(orchestrator)
+        session.commit()
+        session.refresh(task)
+
+        run = TaskRun(
+            id="r" * 32,
+            task_id=task.id,
+            orchestrator_id=orchestrator.id,
+            status="assigned",
+            assigned_at=now,
+            payload_json={"_receiver_dispatch": {"remote_job_id": "job-123"}},
+        )
+        session.add(run)
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/runs/" + ("r" * 32) + "/log?tail=2") as websocket:
+            first_payload = websocket.receive_json()
+            second_payload = websocket.receive_json()
+
+    assert first_payload["event"] == "snapshot"
+    assert first_payload["lines"] == ["line-a", "line-b"]
+    assert second_payload["event"] == "end"
+    assert fake_socket.closed is True
+
+    sent_payload = json.loads(fake_socket.sent_payloads[0])
+    assert sent_payload["action"] == "stream_job_log"
+    assert sent_payload["job_id"] == "job-123"
+    assert sent_payload["tail_lines"] == 2
+    assert sent_payload["password"] == "top-secret"

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 from contextlib import asynccontextmanager
+import json
+import logging
 from pathlib import Path
+from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -15,6 +19,26 @@ from app.config import Settings, load_settings
 from app.database import create_session_factory, create_sqlalchemy_engine
 from app.models import Base, CrawlTask, Orchestrator, TaskRun
 from app.services.scheduler import as_utc, is_task_due, utcnow
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+async def _connect_orchestrator_ws(ws_url: str) -> Any:
+    try:
+        import websockets
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Package 'websockets' is required for dashboard log proxy") from exc
+    return await websockets.connect(ws_url)
+
+
+def _dispatch_meta(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    meta = payload.get("_receiver_dispatch")
+    if not isinstance(meta, dict):
+        return {}
+    return meta
 
 
 DASHBOARD_HTML = """<!doctype html>
@@ -281,6 +305,21 @@ DASHBOARD_HTML = """<!doctype html>
       background: rgba(10, 16, 31, 0.74);
     }
 
+    .run {
+      cursor: pointer;
+      transition: border-color .2s ease, transform .2s ease;
+    }
+
+    .run:hover {
+      border-color: rgba(59, 213, 255, 0.65);
+      transform: translateY(-1px);
+    }
+
+    .run:focus-visible {
+      outline: 2px solid rgba(59, 213, 255, 0.8);
+      outline-offset: 2px;
+    }
+
     .row-top {
       display: flex;
       justify-content: space-between;
@@ -317,6 +356,80 @@ DASHBOARD_HTML = """<!doctype html>
       transform: translateY(0);
     }
 
+    .log-modal[hidden] { display: none; }
+
+    .log-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: grid;
+      place-items: center;
+    }
+
+    .log-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(3, 6, 12, 0.72);
+      backdrop-filter: blur(3px);
+    }
+
+    .log-shell {
+      position: relative;
+      width: min(1020px, calc(100vw - 20px));
+      max-height: calc(100vh - 28px);
+      border: 1px solid rgba(147, 176, 247, 0.45);
+      border-radius: 14px;
+      background: rgba(9, 13, 25, 0.96);
+      box-shadow: var(--shadow);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      grid-template-rows: auto auto minmax(220px, 1fr);
+    }
+
+    .log-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .log-head h3 {
+      margin: 0;
+      font: 600 1rem/1.2 "Space Grotesk", "IBM Plex Sans", sans-serif;
+    }
+
+    .log-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .log-tail {
+      max-width: 140px;
+    }
+
+    .log-status {
+      color: var(--muted);
+      font-size: 0.83rem;
+      min-height: 1.2rem;
+    }
+
+    .log-output {
+      margin: 0;
+      overflow: auto;
+      border: 1px solid rgba(129, 157, 225, 0.26);
+      border-radius: 10px;
+      padding: 12px;
+      background: rgba(3, 6, 13, 0.95);
+      color: #d9e8ff;
+      font: 500 0.82rem/1.38 ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     @media (max-width: 1080px) {
       .grid-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .panel-grid { grid-template-columns: 1fr; }
@@ -328,6 +441,7 @@ DASHBOARD_HTML = """<!doctype html>
       .grid-metrics { grid-template-columns: 1fr; }
       .task-create { grid-template-columns: 1fr; }
       .layout { padding: 20px 12px 40px; }
+      .log-shell { width: calc(100vw - 14px); max-height: calc(100vh - 14px); }
     }
   </style>
 </head>
@@ -390,10 +504,32 @@ DASHBOARD_HTML = """<!doctype html>
     </section>
   </main>
 
+  <section class=\"log-modal\" id=\"run-log-modal\" hidden>
+    <div class=\"log-backdrop\" id=\"run-log-backdrop\"></div>
+    <section class=\"log-shell\">
+      <div class=\"log-head\">
+        <h3 id=\"run-log-title\">Worker log</h3>
+        <button type=\"button\" id=\"run-log-close\" class=\"ghost\">Закрыть</button>
+      </div>
+      <div class=\"log-toolbar\">
+        <label>Tail lines
+          <input id=\"run-log-tail\" class=\"log-tail\" type=\"number\" min=\"0\" max=\"5000\" value=\"200\" />
+        </label>
+        <button type=\"button\" id=\"run-log-reconnect\">Переподключить</button>
+      </div>
+      <div class=\"log-status\" id=\"run-log-status\">Выберите run для просмотра live-лога.</div>
+      <pre class=\"log-output\" id=\"run-log-output\"></pre>
+    </section>
+  </section>
+
   <script>
     const state = {
       overview: null,
       tasks: [],
+      logViewer: {
+        runId: null,
+        socket: null,
+      },
     };
 
     const metricsEl = document.getElementById('metrics');
@@ -402,6 +538,11 @@ DASHBOARD_HTML = """<!doctype html>
     const runListEl = document.getElementById('run-list');
     const generatedAtEl = document.getElementById('generated-at');
     const flashEl = document.getElementById('flash');
+    const runLogModalEl = document.getElementById('run-log-modal');
+    const runLogTitleEl = document.getElementById('run-log-title');
+    const runLogStatusEl = document.getElementById('run-log-status');
+    const runLogOutputEl = document.getElementById('run-log-output');
+    const runLogTailEl = document.getElementById('run-log-tail');
 
     function flash(message, isError = false) {
       flashEl.textContent = message;
@@ -427,6 +568,109 @@ DASHBOARD_HTML = """<!doctype html>
       const dt = new Date(value);
       if (Number.isNaN(dt.getTime())) return value;
       return dt.toLocaleString();
+    }
+
+    function wsUrl(path) {
+      const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${scheme}//${window.location.host}${path}`;
+    }
+
+    function closeLogSocket() {
+      const socket = state.logViewer.socket;
+      state.logViewer.socket = null;
+      if (!socket) return;
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close();
+      }
+    }
+
+    function closeLogModal() {
+      closeLogSocket();
+      runLogModalEl.hidden = true;
+      state.logViewer.runId = null;
+    }
+
+    function appendLogLines(lines) {
+      if (!Array.isArray(lines) || !lines.length) return;
+      const chunk = `${lines.join('\n')}\n`;
+      runLogOutputEl.textContent += chunk;
+      runLogOutputEl.scrollTop = runLogOutputEl.scrollHeight;
+    }
+
+    function connectRunLog(runId) {
+      closeLogSocket();
+      state.logViewer.runId = runId;
+      runLogOutputEl.textContent = '';
+      const tailValue = Number(runLogTailEl.value);
+      const tailLines = Number.isFinite(tailValue) ? Math.max(0, Math.min(5000, Math.floor(tailValue))) : 200;
+      runLogTailEl.value = String(tailLines);
+      runLogStatusEl.textContent = `Подключение к live-логу run ${runId.slice(0, 12)}...`;
+      runLogTitleEl.textContent = `Worker log • run ${runId.slice(0, 12)}`;
+
+      const url = wsUrl(`/ws/runs/${encodeURIComponent(runId)}/log?tail=${tailLines}`);
+      const socket = new WebSocket(url);
+      state.logViewer.socket = socket;
+
+      socket.onopen = () => {
+        runLogStatusEl.textContent = `Подключено. Tail: ${tailLines} строк.`;
+      };
+
+      socket.onmessage = (event) => {
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (_) {
+          runLogStatusEl.textContent = 'Ошибка: backend вернул невалидный JSON лога.';
+          return;
+        }
+        if (!payload || typeof payload !== 'object') {
+          runLogStatusEl.textContent = 'Ошибка: backend вернул неожиданный payload.';
+          return;
+        }
+
+        if (payload.event === 'snapshot') {
+          runLogOutputEl.textContent = '';
+          appendLogLines(payload.lines);
+          runLogStatusEl.textContent = `Snapshot получен (${Array.isArray(payload.lines) ? payload.lines.length : 0} строк).`;
+          return;
+        }
+
+        if (payload.event === 'append') {
+          appendLogLines(payload.lines);
+          return;
+        }
+
+        if (payload.event === 'waiting') {
+          runLogStatusEl.textContent = payload.message || 'Ожидание появления файла лога...';
+          return;
+        }
+
+        if (payload.event === 'end') {
+          runLogStatusEl.textContent = `Поток завершен: статус ${payload.status || 'unknown'}.`;
+          closeLogSocket();
+          return;
+        }
+
+        if (payload.event === 'error' || payload.ok === false) {
+          runLogStatusEl.textContent = payload.error || 'Ошибка потока лога.';
+          closeLogSocket();
+        }
+      };
+
+      socket.onerror = () => {
+        runLogStatusEl.textContent = 'Ошибка websocket-подключения к backend.';
+      };
+
+      socket.onclose = () => {
+        if (state.logViewer.socket === socket) {
+          state.logViewer.socket = null;
+        }
+      };
+    }
+
+    function openRunLog(runId) {
+      runLogModalEl.hidden = false;
+      connectRunLog(runId);
     }
 
     function isDue(task) {
@@ -512,7 +756,7 @@ DASHBOARD_HTML = """<!doctype html>
         return;
       }
       runListEl.innerHTML = runs.map((run) => `
-        <article class=\"run\">
+        <article class=\"run\" data-run-id=\"${run.id}\" tabindex=\"0\" role=\"button\" aria-label=\"Открыть live-лог run ${run.id.slice(0, 12)}\">
           <div class=\"row-top\">
             <strong class=\"mono\">${run.id.slice(0, 12)}</strong>
             <span class=\"chip ${run.status}\">${run.status}</span>
@@ -520,6 +764,7 @@ DASHBOARD_HTML = """<!doctype html>
           <div class=\"muted\">task #${run.task_id} • ${run.city || '—'} / ${run.store || '—'}</div>
           <div class=\"muted\">orch: ${run.orchestrator_name || '—'}</div>
           <div class=\"muted\">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
+          <div class=\"muted\">клик: live worker log</div>
         </article>
       `).join('');
     }
@@ -597,9 +842,31 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
+    function onRunAction(event) {
+      const card = event.target.closest('article.run[data-run-id]');
+      if (!card) return;
+      openRunLog(card.dataset.runId);
+    }
+
+    function onRunKeydown(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const card = event.target.closest('article.run[data-run-id]');
+      if (!card) return;
+      event.preventDefault();
+      openRunLog(card.dataset.runId);
+    }
+
     document.getElementById('refresh').addEventListener('click', refreshAll);
     document.getElementById('create-form').addEventListener('submit', createTask);
     taskBodyEl.addEventListener('click', onTaskAction);
+    runListEl.addEventListener('click', onRunAction);
+    runListEl.addEventListener('keydown', onRunKeydown);
+    document.getElementById('run-log-close').addEventListener('click', closeLogModal);
+    document.getElementById('run-log-backdrop').addEventListener('click', closeLogModal);
+    document.getElementById('run-log-reconnect').addEventListener('click', () => {
+      if (!state.logViewer.runId) return;
+      connectRunLog(state.logViewer.runId);
+    });
 
     refreshAll();
     window.setInterval(refreshAll, 15000);
@@ -738,6 +1005,84 @@ def create_dashboard_app(settings: Settings | None = None) -> FastAPI:
             return _task_to_dict(task)
         finally:
             session.close()
+
+    @app.websocket("/ws/runs/{run_id}/log")
+    async def stream_run_log(
+        websocket: WebSocket,
+        run_id: str,
+        tail: int = Query(default=200, ge=0, le=5000),
+    ) -> None:
+        await websocket.accept()
+        session = session_factory()
+        parser_socket: Any | None = None
+
+        async def _send_error(message: str) -> None:
+            with contextlib.suppress(Exception):
+                await websocket.send_json(
+                    {
+                        "ok": False,
+                        "action": "stream_job_log",
+                        "event": "error",
+                        "run_id": run_id,
+                        "error": message,
+                    }
+                )
+
+        try:
+            run = session.get(TaskRun, run_id)
+            if run is None:
+                await _send_error("Run not found.")
+                return
+
+            dispatch_meta = _dispatch_meta(run.payload_json)
+            remote_job_id = dispatch_meta.get("remote_job_id")
+            if not isinstance(remote_job_id, str) or not remote_job_id.strip():
+                await _send_error("Run is not linked to orchestrator WS job.")
+                return
+
+            parser_socket = await _connect_orchestrator_ws(app_settings.orchestrator_ws_url)
+            request_payload: dict[str, Any] = {
+                "action": "stream_job_log",
+                "job_id": remote_job_id.strip(),
+                "tail_lines": int(tail),
+            }
+            if app_settings.orchestrator_ws_password is not None:
+                request_payload["password"] = app_settings.orchestrator_ws_password
+            await parser_socket.send(json.dumps(request_payload, ensure_ascii=False))
+
+            while True:
+                raw_payload = await parser_socket.recv()
+                raw_text = (
+                    raw_payload.decode("utf-8", errors="replace")
+                    if isinstance(raw_payload, (bytes, bytearray))
+                    else str(raw_payload)
+                )
+                try:
+                    parsed_payload = json.loads(raw_text)
+                except json.JSONDecodeError:
+                    await _send_error("Orchestrator returned invalid JSON.")
+                    return
+
+                if not isinstance(parsed_payload, dict):
+                    await _send_error("Orchestrator returned unexpected payload format.")
+                    return
+
+                await websocket.send_json(parsed_payload)
+                event_name = str(parsed_payload.get("event", "")).strip().lower()
+                if parsed_payload.get("ok") is False or event_name in {"end", "error"}:
+                    return
+        except WebSocketDisconnect:
+            LOGGER.debug("Dashboard client disconnected from run-log stream: run_id=%s", run_id)
+        except Exception as exc:
+            LOGGER.exception("Run log proxy failed: run_id=%s error=%s", run_id, exc)
+            await _send_error(str(exc))
+        finally:
+            session.close()
+            if parser_socket is not None:
+                with contextlib.suppress(Exception):
+                    await parser_socket.close()
+            with contextlib.suppress(Exception):
+                await websocket.close()
 
     @app.get("/api/overview")
     def overview() -> dict[str, object]:
