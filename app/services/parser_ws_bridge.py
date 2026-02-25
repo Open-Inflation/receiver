@@ -37,6 +37,7 @@ class ParserWsBridge:
         poll_interval_sec: float,
         manager_name: str,
         submit_include_images: bool,
+        submit_full_catalog: bool,
         upload_archive_images: bool,
     ):
         self._session_factory = session_factory
@@ -49,6 +50,7 @@ class ParserWsBridge:
         self._poll_interval_sec = max(0.5, float(poll_interval_sec))
         self._manager_name = manager_name
         self._submit_include_images = submit_include_images
+        self._submit_full_catalog = submit_full_catalog
         self._upload_archive_images = upload_archive_images
 
         self._stop_event = asyncio.Event()
@@ -243,6 +245,7 @@ class ParserWsBridge:
             "store_code": task.store,
             "parser": task.parser_name,
             "include_images": self._submit_include_images,
+            "full_catalog": self._submit_full_catalog,
         }
         city_token = task.city.strip()
         if city_token:

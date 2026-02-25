@@ -106,6 +106,7 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
         poll_interval_sec=0.2,
         manager_name="parser-ws-test",
         submit_include_images=True,
+        submit_full_catalog=True,
         upload_archive_images=True,
     )
 
@@ -127,8 +128,10 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
             },
         },
     ]
+    ws_requests: list[dict[str, object]] = []
 
     async def fake_ws_request(payload):
+        ws_requests.append(dict(payload))
         assert responses, f"Unexpected ws request: {payload}"
         return responses.pop(0)
 
@@ -155,6 +158,9 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
 
     assert image_pipeline.archive_calls == ["/tmp/result.tar.gz"]
     assert len(artifact_ingestor.calls) == 1
+    assert ws_requests[1]["action"] == "submit_store"
+    assert ws_requests[1]["full_catalog"] is True
+    assert ws_requests[1]["include_images"] is True
 
 
 def test_parser_ws_bridge_cycle(tmp_path):
@@ -174,6 +180,7 @@ async def _run_ws_persistent_connection_test() -> None:
         poll_interval_sec=1.0,
         manager_name="parser-ws-test",
         submit_include_images=True,
+        submit_full_catalog=True,
         upload_archive_images=True,
     )
 

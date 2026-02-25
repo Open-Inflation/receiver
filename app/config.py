@@ -21,6 +21,7 @@ class Settings:
     orchestrator_manager_name: str = "parser-ws"
     orchestrator_auto_dispatch_enabled: bool = True
     orchestrator_submit_include_images: bool = True
+    orchestrator_submit_full_catalog: bool = True
     orchestrator_upload_archive_images: bool = True
 
 
@@ -69,5 +70,6 @@ def load_settings() -> Settings:
         orchestrator_manager_name=orchestrator_manager_name,
         orchestrator_auto_dispatch_enabled=_env_bool("ORCHESTRATOR_AUTO_DISPATCH_ENABLED", True),
         orchestrator_submit_include_images=_env_bool("ORCHESTRATOR_SUBMIT_INCLUDE_IMAGES", True),
+        orchestrator_submit_full_catalog=_env_bool("ORCHESTRATOR_SUBMIT_FULL_CATALOG", True),
         orchestrator_upload_archive_images=_env_bool("ORCHESTRATOR_UPLOAD_ARCHIVE_IMAGES", True),
     )

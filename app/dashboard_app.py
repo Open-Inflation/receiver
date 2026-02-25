@@ -310,14 +310,19 @@ DASHBOARD_HTML = """<!doctype html>
       transition: border-color .2s ease, transform .2s ease;
     }
 
-    .run:hover {
+    .run:not(.done):hover {
       border-color: rgba(59, 213, 255, 0.65);
       transform: translateY(-1px);
     }
 
-    .run:focus-visible {
+    .run:not(.done):focus-visible {
       outline: 2px solid rgba(59, 213, 255, 0.8);
       outline-offset: 2px;
+    }
+
+    .run.done {
+      cursor: default;
+      opacity: 0.78;
     }
 
     .row-top {
@@ -755,8 +760,13 @@ DASHBOARD_HTML = """<!doctype html>
         runListEl.innerHTML = '<div class=\"muted\">История запусков пуста</div>';
         return;
       }
-      runListEl.innerHTML = runs.map((run) => `
-        <article class=\"run\" data-run-id=\"${run.id}\" tabindex=\"0\" role=\"button\" aria-label=\"Открыть live-лог run ${run.id.slice(0, 12)}\">
+      runListEl.innerHTML = runs.map((run) => {
+        const isDone = run.status === 'success' || run.status === 'error';
+        const attrs = isDone
+          ? ''
+          : ` data-run-id=\"${run.id}\" tabindex=\"0\" role=\"button\" aria-label=\"Открыть live-лог run ${run.id.slice(0, 12)}\"`;
+        return `
+        <article class=\"run ${isDone ? 'done' : ''}\"${attrs}>
           <div class=\"row-top\">
             <strong class=\"mono\">${run.id.slice(0, 12)}</strong>
             <span class=\"chip ${run.status}\">${run.status}</span>
@@ -764,9 +774,10 @@ DASHBOARD_HTML = """<!doctype html>
           <div class=\"muted\">task #${run.task_id} • ${run.city || '—'} / ${run.store || '—'}</div>
           <div class=\"muted\">orch: ${run.orchestrator_name || '—'}</div>
           <div class=\"muted\">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
-          <div class=\"muted\">клик: live worker log</div>
+          <div class=\"muted\">${isDone ? 'лог недоступен: run завершен' : 'клик: live worker log'}</div>
         </article>
-      `).join('');
+      `;
+      }).join('');
     }
 
     async function refreshAll() {

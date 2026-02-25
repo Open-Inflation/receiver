@@ -88,6 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         poll_interval_sec=app_settings.orchestrator_poll_interval_sec,
         manager_name=app_settings.orchestrator_manager_name,
         submit_include_images=app_settings.orchestrator_submit_include_images,
+        submit_full_catalog=app_settings.orchestrator_submit_full_catalog,
         upload_archive_images=app_settings.orchestrator_upload_archive_images,
     )
 
