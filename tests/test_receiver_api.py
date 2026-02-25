@@ -90,6 +90,57 @@ def test_due_task_selected_when_frequency_elapsed(client):
     assert next_task.json()["assignment"] is not None
 
 
+def test_delete_task_removes_it_from_list(client):
+    create_task = client.post(
+        "/api/tasks",
+        json={
+            "city": "Moscow",
+            "store": "D100",
+            "frequency_hours": 24,
+        },
+    )
+    assert create_task.status_code == 201
+    task_id = create_task.json()["id"]
+
+    deleted = client.delete(f"/api/tasks/{task_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["ok"] is True
+
+    tasks = client.get("/api/tasks")
+    assert tasks.status_code == 200
+    assert tasks.json() == []
+
+
+def test_delete_task_keeps_existing_run_history(client):
+    create_task = client.post(
+        "/api/tasks",
+        json={
+            "city": "Moscow",
+            "store": "H100",
+            "frequency_hours": 24,
+        },
+    )
+    assert create_task.status_code == 201
+    task_id = create_task.json()["id"]
+
+    token = _register_orchestrator(client, name="orch-delete-history")
+    assignment = client.post("/api/orchestrators/next-task", headers=_auth(token)).json()["assignment"]
+    assert assignment is not None
+    run_id = assignment["run_id"]
+
+    deleted = client.delete(f"/api/tasks/{task_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["ok"] is True
+
+    tasks = client.get("/api/tasks")
+    assert tasks.status_code == 200
+    assert tasks.json() == []
+
+    run = client.get(f"/api/runs/{run_id}", headers=_auth(token))
+    assert run.status_code == 200
+    assert run.json()["id"] == run_id
+
+
 def test_auth_required_for_orchestrator_endpoints(client):
     no_auth = client.post("/api/orchestrators/next-task")
     assert no_auth.status_code == 401

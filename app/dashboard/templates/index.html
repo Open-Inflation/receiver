@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Receiver Control Room</title>
+    <link rel="stylesheet" href="/assets/dashboard.css" />
+</head>
+<body>
+  <main class="layout">
+    <section class="hero">
+      <h1>Receiver Control Room</h1>
+      <p>Управление задачами обхода, быстрый контроль оркестраторов и мониторинг последних запусков в одном отдельном приложении.</p>
+      <div class="hero-toolbar">
+        <button id="refresh">Обновить данные</button>
+        <span class="muted">Обновлено: <span id="generated-at">—</span></span>
+      </div>
+      <div class="flash" id="flash"></div>
+    </section>
+
+    <section class="grid-metrics" id="metrics"></section>
+
+    <section class="panel">
+      <h2>Новая задача</h2>
+      <form class="task-create" id="create-form">
+        <label>Город<input required name="city" placeholder="Moscow" /></label>
+        <label>Магазин<input required name="store" placeholder="C001" /></label>
+        <label>Частота (ч)<input required min="1" type="number" name="frequency_hours" value="24" /></label>
+        <label>Парсер<input name="parser_name" value="fixprice" /></label>
+        <label>Активна
+          <select name="is_active"><option value="true" selected>Да</option><option value="false">Нет</option></select>
+        </label>
+        <button type="submit">Создать</button>
+      </form>
+    </section>
+
+    <section class="panel-grid">
+      <section class="panel">
+        <h2>Задачи</h2>
+        <div class="tasks-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Город</th>
+                <th>Магазин</th>
+                <th>Парсер</th>
+                <th>Частота</th>
+                <th>Последний обход</th>
+                <th>Статус</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody id="task-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Оркестраторы</h2>
+        <div class="orch-list" id="orch-list"></div>
+        <h2 style="margin-top:14px;">Последние run</h2>
+        <div class="runs" id="run-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <section class="log-modal" id="run-log-modal" hidden>
+    <div class="log-backdrop" id="run-log-backdrop"></div>
+    <section class="log-shell">
+      <div class="log-head">
+        <h3 id="run-log-title">Worker log</h3>
+        <button type="button" id="run-log-close" class="ghost">Закрыть</button>
+      </div>
+      <div class="log-toolbar">
+        <label>Tail lines
+          <input id="run-log-tail" class="log-tail" type="number" min="0" max="5000" value="200" />
+        </label>
+        <button type="button" id="run-log-reconnect">Переподключить</button>
+      </div>
+      <div class="log-status" id="run-log-status">Выберите run для просмотра live-лога.</div>
+      <pre class="log-output" id="run-log-output"></pre>
+    </section>
+  </section>
+
+  <script src="/assets/dashboard.js" defer></script>
+</body>
+</html>
+

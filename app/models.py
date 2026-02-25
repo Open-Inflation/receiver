@@ -44,6 +44,7 @@ class CrawlTask(Base):
 
     parser_name: Mapped[str] = mapped_column(String(64), nullable=False, default="fixprice")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     lease_owner_id: Mapped[str | None] = mapped_column(
         String(32),

@@ -75,7 +75,7 @@ def claim_next_due_task(
 
     candidates = session.scalars(
         select(CrawlTask)
-        .where(CrawlTask.is_active.is_(True))
+        .where(CrawlTask.is_active.is_(True), CrawlTask.deleted_at.is_(None))
         .order_by(
             case((CrawlTask.last_crawl_at.is_(None), 0), else_=1).asc(),
             CrawlTask.last_crawl_at.asc(),
@@ -95,6 +95,7 @@ def claim_next_due_task(
             .where(
                 CrawlTask.id == candidate.id,
                 CrawlTask.is_active.is_(True),
+                CrawlTask.deleted_at.is_(None),
                 or_(CrawlTask.lease_until.is_(None), CrawlTask.lease_until <= now),
             )
             .values(

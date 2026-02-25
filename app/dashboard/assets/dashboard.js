@@ -1,0 +1,380 @@
+    const state = {
+      overview: null,
+      tasks: [],
+      logViewer: {
+        runId: null,
+        socket: null,
+      },
+    };
+
+    const metricsEl = document.getElementById('metrics');
+    const taskBodyEl = document.getElementById('task-body');
+    const orchListEl = document.getElementById('orch-list');
+    const runListEl = document.getElementById('run-list');
+    const generatedAtEl = document.getElementById('generated-at');
+    const flashEl = document.getElementById('flash');
+    const runLogModalEl = document.getElementById('run-log-modal');
+    const runLogTitleEl = document.getElementById('run-log-title');
+    const runLogStatusEl = document.getElementById('run-log-status');
+    const runLogOutputEl = document.getElementById('run-log-output');
+    const runLogTailEl = document.getElementById('run-log-tail');
+
+    function flash(message, isError = false) {
+      flashEl.textContent = message;
+      flashEl.style.color = isError ? 'var(--err)' : 'var(--warn)';
+      flashEl.classList.add('show');
+      window.setTimeout(() => flashEl.classList.remove('show'), 2600);
+    }
+
+    async function api(path, options = {}) {
+      const resp = await fetch(path, {
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        ...options,
+      });
+      if (!resp.ok) {
+        const detail = await resp.text();
+        throw new Error(`${resp.status}: ${detail}`);
+      }
+      return resp.json();
+    }
+
+    function fmtDate(value) {
+      if (!value) return '—';
+      const dt = new Date(value);
+      if (Number.isNaN(dt.getTime())) return value;
+      return dt.toLocaleString();
+    }
+
+    function wsUrl(path) {
+      const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${scheme}//${window.location.host}${path}`;
+    }
+
+    function closeLogSocket() {
+      const socket = state.logViewer.socket;
+      state.logViewer.socket = null;
+      if (!socket) return;
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close();
+      }
+    }
+
+    function closeLogModal() {
+      closeLogSocket();
+      runLogModalEl.hidden = true;
+      state.logViewer.runId = null;
+      document.body.style.overflow = '';
+    }
+
+    function shouldStickToBottom(element) {
+      return (element.scrollHeight - element.scrollTop - element.clientHeight) < 24;
+    }
+
+    function appendLogLines(lines) {
+      if (!Array.isArray(lines) || !lines.length) return;
+      const stickToBottom = shouldStickToBottom(runLogOutputEl);
+      const chunk = `${lines.join('\n')}\n`;
+      runLogOutputEl.textContent += chunk;
+      if (stickToBottom) {
+        runLogOutputEl.scrollTop = runLogOutputEl.scrollHeight;
+      }
+    }
+
+    function connectRunLog(runId) {
+      closeLogSocket();
+      state.logViewer.runId = runId;
+      runLogOutputEl.textContent = '';
+      const tailValue = Number(runLogTailEl.value);
+      const tailLines = Number.isFinite(tailValue) ? Math.max(0, Math.min(5000, Math.floor(tailValue))) : 200;
+      runLogTailEl.value = String(tailLines);
+      runLogStatusEl.textContent = `Подключение к live-логу run ${runId.slice(0, 12)}...`;
+      runLogTitleEl.textContent = `Worker log • run ${runId.slice(0, 12)}`;
+
+      const url = wsUrl(`/ws/runs/${encodeURIComponent(runId)}/log?tail=${tailLines}`);
+      const socket = new WebSocket(url);
+      state.logViewer.socket = socket;
+
+      socket.onopen = () => {
+        runLogStatusEl.textContent = `Подключено. Tail: ${tailLines} строк.`;
+      };
+
+      socket.onmessage = (event) => {
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (_) {
+          runLogStatusEl.textContent = 'Ошибка: backend вернул невалидный JSON лога.';
+          return;
+        }
+        if (!payload || typeof payload !== 'object') {
+          runLogStatusEl.textContent = 'Ошибка: backend вернул неожиданный payload.';
+          return;
+        }
+
+        if (payload.event === 'snapshot') {
+          runLogOutputEl.textContent = '';
+          appendLogLines(payload.lines);
+          runLogStatusEl.textContent = `Snapshot получен (${Array.isArray(payload.lines) ? payload.lines.length : 0} строк).`;
+          return;
+        }
+
+        if (payload.event === 'append') {
+          appendLogLines(payload.lines);
+          return;
+        }
+
+        if (payload.event === 'waiting') {
+          runLogStatusEl.textContent = payload.message || 'Ожидание появления файла лога...';
+          return;
+        }
+
+        if (payload.event === 'end') {
+          runLogStatusEl.textContent = `Поток завершен: статус ${payload.status || 'unknown'}.`;
+          closeLogSocket();
+          return;
+        }
+
+        if (payload.event === 'error' || payload.ok === false) {
+          runLogStatusEl.textContent = payload.error || 'Ошибка потока лога.';
+          closeLogSocket();
+        }
+      };
+
+      socket.onerror = () => {
+        runLogStatusEl.textContent = 'Ошибка websocket-подключения к backend.';
+      };
+
+      socket.onclose = () => {
+        if (state.logViewer.socket === socket) {
+          state.logViewer.socket = null;
+        }
+      };
+    }
+
+    function openRunLog(runId) {
+      runLogModalEl.hidden = false;
+      document.body.style.overflow = 'hidden';
+      connectRunLog(runId);
+    }
+
+    function isDue(task) {
+      if (!task.is_active) return false;
+      if (!task.last_crawl_at) return true;
+      const last = new Date(task.last_crawl_at).getTime();
+      if (Number.isNaN(last)) return false;
+      const dueTs = last + Number(task.frequency_hours || 0) * 3600 * 1000;
+      return dueTs <= Date.now();
+    }
+
+    function renderMetrics() {
+      const o = state.overview;
+      if (!o) return;
+      generatedAtEl.textContent = fmtDate(o.generated_at);
+
+      const entries = [
+        ['Задачи всего', o.tasks_total],
+        ['Активные', o.tasks_active],
+        ['Просроченные', o.tasks_due],
+        ['В lease', o.tasks_leased],
+        ['Оркестраторы', o.orchestrators_total],
+        ['Runs всего', o.runs_total],
+        ['Runs success', o.runs_success],
+        ['Runs error', o.runs_error],
+        ['Runs assigned', o.runs_assigned],
+      ];
+      metricsEl.innerHTML = entries.map(([label, value]) => `
+        <article class="metric">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+        </article>
+      `).join('');
+    }
+
+    function renderTasks() {
+      taskBodyEl.innerHTML = state.tasks.map((task) => {
+        const due = isDue(task);
+        const statusClass = task.is_active ? (due ? 'off' : 'on') : 'off';
+        const statusLabel = task.is_active ? (due ? 'Просрочена' : 'В графике') : 'Отключена';
+        return `
+          <tr data-id="${task.id}">
+            <td class="mono">${task.id}</td>
+            <td><input data-field="city" value="${task.city}" /></td>
+            <td><input data-field="store" value="${task.store}" /></td>
+            <td><input data-field="parser_name" value="${task.parser_name}" /></td>
+            <td><input data-field="frequency_hours" type="number" min="1" value="${task.frequency_hours}" /></td>
+            <td>${fmtDate(task.last_crawl_at)}</td>
+            <td>
+              <div class="status ${statusClass}">${statusLabel}</div>
+              <label style="margin-top:8px;">active
+                <select data-field="is_active"><option value="true" ${task.is_active ? 'selected' : ''}>true</option><option value="false" ${!task.is_active ? 'selected' : ''}>false</option></select>
+              </label>
+            </td>
+            <td>
+              <div class="toolbar">
+                <button data-action="save" data-id="${task.id}">Сохранить</button>
+                <button data-action="delete" data-id="${task.id}" class="danger">Удалить</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderOrchestrators() {
+      const list = state.overview?.orchestrators || [];
+      if (!list.length) {
+        orchListEl.innerHTML = '<div class="muted">Оркестраторы не зарегистрированы</div>';
+        return;
+      }
+      orchListEl.innerHTML = list.map((item) => `
+        <article class="orch">
+          <div class="row-top"><strong>${item.name}</strong><span class="mono">${item.id.slice(0, 8)}</span></div>
+          <div class="muted">heartbeat: ${fmtDate(item.last_heartbeat_at)}</div>
+        </article>
+      `).join('');
+    }
+
+    function renderRuns() {
+      const runs = state.overview?.recent_runs || [];
+      if (!runs.length) {
+        runListEl.innerHTML = '<div class="muted">История запусков пуста</div>';
+        return;
+      }
+      runListEl.innerHTML = runs.map((run) => {
+        const isDone = run.status === 'success' || run.status === 'error';
+        const attrs = isDone
+          ? ''
+          : ` data-run-id="${run.id}" tabindex="0" role="button" aria-label="Открыть live-лог run ${run.id.slice(0, 12)}"`;
+        return `
+        <article class="run ${isDone ? 'done' : ''}"${attrs}>
+          <div class="row-top">
+            <strong class="mono">${run.id.slice(0, 12)}</strong>
+            <span class="chip ${run.status}">${run.status}</span>
+          </div>
+          <div class="muted">task #${run.task_id} • ${run.city || '—'} / ${run.store || '—'}</div>
+          <div class="muted">orch: ${run.orchestrator_name || '—'}</div>
+          <div class="muted">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
+          <div class="muted">${isDone ? 'лог недоступен: run завершен' : 'клик: live worker log'}</div>
+        </article>
+      `;
+      }).join('');
+    }
+
+    async function refreshAll() {
+      try {
+        const [overview, tasks] = await Promise.all([api('/api/overview'), api('/api/tasks')]);
+        state.overview = overview;
+        state.tasks = tasks;
+        renderMetrics();
+        renderTasks();
+        renderOrchestrators();
+        renderRuns();
+      } catch (err) {
+        flash(`Ошибка обновления: ${err.message}`, true);
+      }
+    }
+
+    async function createTask(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const payload = {
+        city: form.city.value.trim(),
+        store: form.store.value.trim(),
+        frequency_hours: Number(form.frequency_hours.value),
+        parser_name: form.parser_name.value.trim() || 'fixprice',
+        is_active: form.is_active.value === 'true',
+      };
+      if (!payload.city || !payload.store || !payload.frequency_hours) {
+        flash('Заполните обязательные поля', true);
+        return;
+      }
+
+      try {
+        await api('/api/tasks', { method: 'POST', body: JSON.stringify(payload) });
+        form.reset();
+        form.frequency_hours.value = 24;
+        form.parser_name.value = 'fixprice';
+        form.is_active.value = 'true';
+        flash('Задача создана');
+        await refreshAll();
+      } catch (err) {
+        flash(`Ошибка создания: ${err.message}`, true);
+      }
+    }
+
+    async function onTaskAction(event) {
+      const button = event.target.closest('button[data-action]');
+      if (!button) return;
+
+      const row = button.closest('tr[data-id]');
+      if (!row) return;
+      const taskId = row.dataset.id;
+
+      if (button.dataset.action === 'save') {
+        const getValue = (field) => row.querySelector(`[data-field="${field}"]`);
+        const payload = {
+          city: getValue('city').value.trim(),
+          store: getValue('store').value.trim(),
+          parser_name: getValue('parser_name').value.trim() || 'fixprice',
+          frequency_hours: Number(getValue('frequency_hours').value),
+          is_active: getValue('is_active').value === 'true',
+        };
+
+        try {
+          await api(`/api/tasks/${taskId}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+          });
+          flash(`Задача #${taskId} обновлена`);
+          await refreshAll();
+        } catch (err) {
+          flash(`Ошибка сохранения: ${err.message}`, true);
+        }
+        return;
+      }
+
+      if (button.dataset.action === 'delete') {
+        if (!window.confirm(`Удалить задачу #${taskId}?`)) return;
+        try {
+          await api(`/api/tasks/${taskId}`, { method: 'DELETE' });
+          flash(`Задача #${taskId} удалена`);
+          await refreshAll();
+        } catch (err) {
+          flash(`Ошибка удаления: ${err.message}`, true);
+        }
+      }
+    }
+
+    function onRunAction(event) {
+      const card = event.target.closest('article.run[data-run-id]');
+      if (!card) return;
+      openRunLog(card.dataset.runId);
+    }
+
+    function onRunKeydown(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const card = event.target.closest('article.run[data-run-id]');
+      if (!card) return;
+      event.preventDefault();
+      openRunLog(card.dataset.runId);
+    }
+
+    document.getElementById('refresh').addEventListener('click', refreshAll);
+    document.getElementById('create-form').addEventListener('submit', createTask);
+    taskBodyEl.addEventListener('click', onTaskAction);
+    runListEl.addEventListener('click', onRunAction);
+    runListEl.addEventListener('keydown', onRunKeydown);
+    document.getElementById('run-log-close').addEventListener('click', closeLogModal);
+    document.getElementById('run-log-backdrop').addEventListener('click', closeLogModal);
+    document.getElementById('run-log-reconnect').addEventListener('click', () => {
+      if (!state.logViewer.runId) return;
+      connectRunLog(state.logViewer.runId);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      if (runLogModalEl.hidden) return;
+      closeLogModal();
+    });
+
+    refreshAll();
+    window.setInterval(refreshAll, 15000);

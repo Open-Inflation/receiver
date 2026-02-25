@@ -31,3 +31,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.dashboard" = ["templates/*.html", "assets/*.css", "assets/*.js"]

@@ -73,6 +73,14 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
         )
         assert forbidden_update.status_code == 422
 
+        deleted = client.delete(f"/api/tasks/{task_id}")
+        assert deleted.status_code == 200
+        assert deleted.json()["ok"] is True
+
+        tasks_after_delete = client.get("/api/tasks")
+        assert tasks_after_delete.status_code == 200
+        assert tasks_after_delete.json() == []
+
 
 class _FakeParserSocket:
     def __init__(self) -> None:

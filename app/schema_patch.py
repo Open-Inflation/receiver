@@ -20,6 +20,10 @@ TASK_RUNS_COMPAT_COLUMNS: dict[str, str] = {
     "download_expires_at": "DATETIME",
 }
 
+CRAWL_TASKS_COMPAT_COLUMNS: dict[str, str] = {
+    "deleted_at": "DATETIME",
+}
+
 
 def _is_duplicate_column_error(exc: Exception) -> bool:
     message = str(exc).lower()
@@ -49,22 +53,28 @@ def apply_compat_schema_patches(engine: Engine) -> None:
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
 
-    if "task_runs" not in tables:
-        return
+    table_to_columns: dict[str, dict[str, str]] = {
+        "task_runs": TASK_RUNS_COMPAT_COLUMNS,
+        "crawl_tasks": CRAWL_TASKS_COMPAT_COLUMNS,
+    }
 
-    existing_columns = {column["name"] for column in inspector.get_columns("task_runs")}
-    missing_columns = [
-        (column_name, column_type)
-        for column_name, column_type in TASK_RUNS_COMPAT_COLUMNS.items()
-        if column_name not in existing_columns
-    ]
+    for table_name, compat_columns in table_to_columns.items():
+        if table_name not in tables:
+            continue
 
-    if not missing_columns:
-        return
+        existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+        missing_columns = [
+            (column_name, column_type)
+            for column_name, column_type in compat_columns.items()
+            if column_name not in existing_columns
+        ]
+        if not missing_columns:
+            continue
 
-    applied = _apply_columns_patch(engine, "task_runs", missing_columns)
-    if applied:
-        LOGGER.warning(
-            "Applied compatibility schema patch to task_runs: added columns %s",
-            ", ".join(applied),
-        )
+        applied = _apply_columns_patch(engine, table_name, missing_columns)
+        if applied:
+            LOGGER.warning(
+                "Applied compatibility schema patch to %s: added columns %s",
+                table_name,
+                ", ".join(applied),
+            )

@@ -178,7 +178,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/tasks", response_model=list[TaskOut])
     def list_tasks(session: Session = Depends(get_db_session)) -> list[CrawlTask]:
-        return session.scalars(select(CrawlTask).order_by(CrawlTask.id.asc())).all()
+        return session.scalars(
+            select(CrawlTask).where(CrawlTask.deleted_at.is_(None)).order_by(CrawlTask.id.asc())
+        ).all()
 
     @app.patch("/api/tasks/{task_id}", response_model=TaskOut)
     def update_task(
@@ -187,7 +189,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session: Session = Depends(get_db_session),
     ) -> CrawlTask:
         task = session.get(CrawlTask, task_id)
-        if task is None:
+        if task is None or task.deleted_at is not None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
         changes = payload.model_dump(exclude_unset=True)
@@ -202,6 +204,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.commit()
         session.refresh(task)
         return task
+
+    @app.delete("/api/tasks/{task_id}")
+    def delete_task(
+        task_id: int,
+        session: Session = Depends(get_db_session),
+    ) -> dict[str, object]:
+        task = session.get(CrawlTask, task_id)
+        if task is None or task.deleted_at is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+        now = utcnow()
+        task.deleted_at = now
+        task.is_active = False
+        task.lease_owner_id = None
+        task.lease_until = None
+        task.updated_at = now
+        session.commit()
+        return {"ok": True, "task_id": task_id}
 
     @app.post("/api/orchestrators/next-task", response_model=NextTaskOut)
     def get_next_task(
