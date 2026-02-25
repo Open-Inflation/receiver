@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import case, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..models import CrawlTask, Orchestrator, TaskRun
@@ -76,7 +76,11 @@ def claim_next_due_task(
     candidates = session.scalars(
         select(CrawlTask)
         .where(CrawlTask.is_active.is_(True))
-        .order_by(CrawlTask.last_crawl_at.asc().nullsfirst(), CrawlTask.id.asc())
+        .order_by(
+            case((CrawlTask.last_crawl_at.is_(None), 0), else_=1).asc(),
+            CrawlTask.last_crawl_at.asc(),
+            CrawlTask.id.asc(),
+        )
     ).all()
 
     for candidate in candidates:
