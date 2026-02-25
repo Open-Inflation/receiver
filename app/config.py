@@ -15,6 +15,25 @@ class Settings:
     storage_api_token: str
     parser_src_path: Path
     lease_ttl_minutes: int
+    orchestrator_ws_url: str = "ws://127.0.0.1:8765"
+    orchestrator_ws_password: str | None = None
+    orchestrator_poll_interval_sec: float = 5.0
+    orchestrator_manager_name: str = "parser-ws"
+    orchestrator_auto_dispatch_enabled: bool = True
+    orchestrator_submit_include_images: bool = True
+    orchestrator_upload_archive_images: bool = True
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    token = raw.strip().lower()
+    if token in {"1", "true", "yes", "y", "on"}:
+        return True
+    if token in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
 
 
 def load_settings() -> Settings:
@@ -22,6 +41,9 @@ def load_settings() -> Settings:
     storage_base_url = os.getenv("STORAGE_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
     storage_api_token = os.getenv("STORAGE_API_TOKEN", "change-me-token")
     parser_src_path = Path(os.getenv("PARSER_SRC_PATH", "../parser/src")).expanduser().resolve()
+    orchestrator_ws_url = os.getenv("ORCHESTRATOR_WS_URL", "ws://127.0.0.1:8765").strip()
+    orchestrator_ws_password = os.getenv("ORCHESTRATOR_WS_PASSWORD")
+    orchestrator_manager_name = os.getenv("ORCHESTRATOR_MANAGER_NAME", "parser-ws").strip() or "parser-ws"
 
     lease_ttl_raw = os.getenv("LEASE_TTL_MINUTES", "30")
     try:
@@ -29,10 +51,23 @@ def load_settings() -> Settings:
     except ValueError:
         lease_ttl_minutes = 30
 
+    poll_raw = os.getenv("ORCHESTRATOR_POLL_INTERVAL_SEC", "5")
+    try:
+        poll_interval = max(0.5, float(poll_raw))
+    except ValueError:
+        poll_interval = 5.0
+
     return Settings(
         database_url=database_url,
         storage_base_url=storage_base_url,
         storage_api_token=storage_api_token,
         parser_src_path=parser_src_path,
         lease_ttl_minutes=lease_ttl_minutes,
+        orchestrator_ws_url=orchestrator_ws_url,
+        orchestrator_ws_password=orchestrator_ws_password if orchestrator_ws_password else None,
+        orchestrator_poll_interval_sec=poll_interval,
+        orchestrator_manager_name=orchestrator_manager_name,
+        orchestrator_auto_dispatch_enabled=_env_bool("ORCHESTRATOR_AUTO_DISPATCH_ENABLED", True),
+        orchestrator_submit_include_images=_env_bool("ORCHESTRATOR_SUBMIT_INCLUDE_IMAGES", True),
+        orchestrator_upload_archive_images=_env_bool("ORCHESTRATOR_UPLOAD_ARCHIVE_IMAGES", True),
     )

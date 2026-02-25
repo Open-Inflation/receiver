@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
+import sys
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-from .config import Settings, load_settings
-from .database import create_session_factory, create_sqlalchemy_engine
-from .deps import get_current_orchestrator, get_db_session
-from .models import Base, CrawlTask, Orchestrator, TaskRun
-from .schemas import (
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.config import Settings, load_settings
+from app.database import create_session_factory, create_sqlalchemy_engine
+from app.deps import get_current_orchestrator, get_db_session
+from app.models import Base, CrawlTask, Orchestrator, TaskRun
+from app.schema_patch import apply_compat_schema_patches
+from app.schemas import (
     AssignmentOut,
     HeartbeatOut,
     NextTaskOut,
@@ -25,9 +32,11 @@ from .schemas import (
     TaskRunOut,
     TaskUpdate,
 )
-from .services.image_pipeline import ImagePipeline
-from .services.parser_bridge import ParserBridge
-from .services.scheduler import (
+from app.services.image_pipeline import ImagePipeline
+from app.services.artifact_ingestor import ArtifactIngestor
+from app.services.parser_bridge import ParserBridge
+from app.services.parser_ws_bridge import ParserWsBridge
+from app.services.scheduler import (
     TERMINAL_RUN_STATUSES,
     claim_next_due_task,
     create_or_get_orchestrator,
@@ -35,6 +44,8 @@ from .services.scheduler import (
     touch_orchestrator,
     utcnow,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _ensure_sqlite_parent_dir(database_url: str) -> None:
@@ -58,12 +69,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     engine = create_sqlalchemy_engine(app_settings.database_url)
     session_factory = create_session_factory(engine)
     Base.metadata.create_all(bind=engine)
+    apply_compat_schema_patches(engine)
+
+    parser_bridge = ParserBridge(parser_src_path=app_settings.parser_src_path)
+    image_pipeline = ImagePipeline(
+        storage_base_url=app_settings.storage_base_url,
+        storage_api_token=app_settings.storage_api_token,
+    )
+    artifact_ingestor = ArtifactIngestor(parser_src_path=app_settings.parser_src_path)
+    ws_bridge = ParserWsBridge(
+        session_factory=session_factory,
+        parser_bridge=parser_bridge,
+        image_pipeline=image_pipeline,
+        artifact_ingestor=artifact_ingestor,
+        lease_ttl_minutes=app_settings.lease_ttl_minutes,
+        ws_url=app_settings.orchestrator_ws_url,
+        ws_password=app_settings.orchestrator_ws_password,
+        poll_interval_sec=app_settings.orchestrator_poll_interval_sec,
+        manager_name=app_settings.orchestrator_manager_name,
+        submit_include_images=app_settings.orchestrator_submit_include_images,
+        upload_archive_images=app_settings.orchestrator_upload_archive_images,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        bridge_task: asyncio.Task[None] | None = None
+        if app_settings.orchestrator_auto_dispatch_enabled:
+            bridge_task = asyncio.create_task(
+                ws_bridge.run_forever(),
+                name="receiver-parser-ws-bridge",
+            )
         try:
             yield
         finally:
+            if bridge_task is not None:
+                await ws_bridge.stop()
+                await bridge_task
             engine.dispose()
 
     app = FastAPI(
@@ -76,17 +117,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = app_settings
     app.state.engine = engine
     app.state.session_factory = session_factory
-    app.state.parser_bridge = ParserBridge(parser_src_path=app_settings.parser_src_path)
-    app.state.image_pipeline = ImagePipeline(
-        storage_base_url=app_settings.storage_base_url,
-        storage_api_token=app_settings.storage_api_token,
-    )
+    app.state.parser_bridge = parser_bridge
+    app.state.image_pipeline = image_pipeline
+    app.state.artifact_ingestor = artifact_ingestor
+    app.state.parser_ws_bridge = ws_bridge
 
     @app.get("/healthz")
     def healthcheck() -> dict[str, object]:
         return {
             "status": "ok",
             "parser_integration": app.state.parser_bridge.enabled,
+            "dataclass_integration": app.state.artifact_ingestor.dataclass_enabled,
+            "orchestrator_bridge_enabled": app.state.settings.orchestrator_auto_dispatch_enabled,
+            "orchestrator_ws_url": app.state.settings.orchestrator_ws_url,
         }
 
     @app.post("/api/orchestrators/register", response_model=RegisterOrchestratorOut)
@@ -222,6 +265,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             error_message=error_message,
         )
 
+        if payload.status == "success":
+            try:
+                ingest_result = app.state.artifact_ingestor.ingest_run_output(
+                    session,
+                    run=finished_run,
+                )
+                if not ingest_result.get("ok"):
+                    LOGGER.warning(
+                        "Artifact ingest failed for run %s: %s",
+                        finished_run.id,
+                        ingest_result.get("error"),
+                    )
+            except Exception:
+                LOGGER.exception("Artifact ingest crashed for run %s", finished_run.id)
+
         processed_images = sum(1 for item in image_results if item.get("uploaded_url"))
         return SubmitResultOut(
             run_id=finished_run.id,
@@ -253,3 +311,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
+
+
+def main() -> None:
+    import uvicorn
+
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8090)
+
+
+if __name__ == "__main__":
+    main()

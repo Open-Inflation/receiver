@@ -19,6 +19,7 @@ def client(tmp_path: Path):
         storage_api_token="test-token",
         parser_src_path=(Path(__file__).resolve().parents[2] / "parser" / "src"),
         lease_ttl_minutes=30,
+        orchestrator_auto_dispatch_enabled=False,
     )
 
     app = create_app(settings)
