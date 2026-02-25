@@ -40,6 +40,36 @@ class DummyArtifactIngestor:
         return {"ok": True, "artifact_id": 1}
 
 
+class FakePersistentSocket:
+    def __init__(self):
+        self.closed = False
+        self.sent_payloads: list[str] = []
+        self._responses = [
+            '{"ok": true, "action": "pong"}',
+            '{"ok": true, "action": "status"}',
+        ]
+
+    async def send(self, payload: str) -> None:
+        self.sent_payloads.append(payload)
+
+    async def recv(self) -> str:
+        assert self._responses, "No fake WS responses left"
+        return self._responses.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeWebsocketsModule:
+    def __init__(self, socket: FakePersistentSocket):
+        self._socket = socket
+        self.connect_calls = 0
+
+    async def connect(self, _url: str):
+        self.connect_calls += 1
+        return self._socket
+
+
 async def _run_bridge_cycle_test(database_url: str) -> None:
     engine = create_sqlalchemy_engine(database_url)
     session_factory = create_session_factory(engine)
@@ -130,3 +160,38 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
 def test_parser_ws_bridge_cycle(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'bridge.sqlite3'}"
     asyncio.run(_run_bridge_cycle_test(db_url))
+
+
+async def _run_ws_persistent_connection_test() -> None:
+    bridge = ParserWsBridge(
+        session_factory=None,  # type: ignore[arg-type]
+        parser_bridge=DummyParserBridge(),
+        image_pipeline=DummyImagePipeline(),
+        artifact_ingestor=DummyArtifactIngestor(),
+        lease_ttl_minutes=30,
+        ws_url="ws://127.0.0.1:8765",
+        ws_password=None,
+        poll_interval_sec=1.0,
+        manager_name="parser-ws-test",
+        submit_include_images=True,
+        upload_archive_images=True,
+    )
+
+    fake_socket = FakePersistentSocket()
+    fake_ws_module = FakeWebsocketsModule(fake_socket)
+    bridge._ws_module = fake_ws_module
+
+    first = await bridge._ws_request({"action": "ping"})
+    second = await bridge._ws_request({"action": "status"})
+
+    assert first.get("ok") is True
+    assert second.get("ok") is True
+    assert fake_ws_module.connect_calls == 1
+    assert len(fake_socket.sent_payloads) == 2
+
+    await bridge.stop()
+    assert fake_socket.closed is True
+
+
+def test_ws_request_reuses_connection():
+    asyncio.run(_run_ws_persistent_connection_test())

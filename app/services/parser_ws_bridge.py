@@ -53,6 +53,9 @@ class ParserWsBridge:
 
         self._stop_event = asyncio.Event()
         self._manager_orchestrator_id: str | None = None
+        self._ws_module: Any | None = None
+        self._ws_socket: Any | None = None
+        self._ws_lock = asyncio.Lock()
 
     async def run_forever(self) -> None:
         LOGGER.info(
@@ -72,10 +75,14 @@ class ParserWsBridge:
             except asyncio.TimeoutError:
                 continue
 
+        async with self._ws_lock:
+            await self._close_ws_connection()
         LOGGER.info("Parser WS bridge stopped")
 
     async def stop(self) -> None:
         self._stop_event.set()
+        async with self._ws_lock:
+            await self._close_ws_connection()
 
     async def run_cycle(self) -> None:
         ping = await self._ws_request({"action": "ping"})
@@ -332,24 +339,83 @@ class ParserWsBridge:
         if self._ws_password is not None:
             request_payload["password"] = self._ws_password
 
+        async with self._ws_lock:
+            for attempt in range(2):
+                try:
+                    socket = await self._ensure_ws_connection()
+                except RuntimeError as exc:
+                    return {"ok": False, "error": str(exc)}
+
+                try:
+                    await socket.send(json.dumps(request_payload, ensure_ascii=False))
+                    raw = await socket.recv()
+                except Exception as exc:
+                    await self._close_ws_connection()
+                    if attempt == 0:
+                        continue
+                    return {"ok": False, "error": f"WS request failed: {exc}"}
+
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    return {"ok": False, "error": "Orchestrator returned invalid JSON"}
+
+                if not isinstance(data, dict):
+                    return {"ok": False, "error": "Orchestrator response is not a JSON object"}
+                return data
+
+        return {"ok": False, "error": "WS request failed unexpectedly"}
+
+    async def _ensure_ws_connection(self) -> Any:
+        if self._ws_socket is not None and self._socket_is_open(self._ws_socket):
+            return self._ws_socket
+
+        websockets = self._load_websockets_module()
+        if websockets is None:
+            raise RuntimeError("websockets package is not installed")
+
+        try:
+            self._ws_socket = await websockets.connect(self._ws_url)
+            LOGGER.debug("Parser WS connected: %s", self._ws_url)
+        except Exception as exc:
+            self._ws_socket = None
+            LOGGER.debug("Parser WS connection failed: %s", exc)
+            raise RuntimeError(f"WS connect failed: {exc}") from exc
+        return self._ws_socket
+
+    def _load_websockets_module(self) -> Any | None:
+        if self._ws_module is not None:
+            return self._ws_module
+
         try:
             import websockets
         except ModuleNotFoundError:
             LOGGER.error("Package 'websockets' is required for orchestrator bridge")
-            return {"ok": False, "error": "websockets package is not installed"}
+            return None
 
+        self._ws_module = websockets
+        return websockets
+
+    async def _close_ws_connection(self) -> None:
+        socket = self._ws_socket
+        self._ws_socket = None
+        if socket is None:
+            return
         try:
-            async with websockets.connect(self._ws_url) as socket:
-                await socket.send(json.dumps(request_payload, ensure_ascii=False))
-                raw = await socket.recv()
-        except Exception as exc:
-            return {"ok": False, "error": f"WS request failed: {exc}"}
+            await socket.close()
+        except Exception:
+            LOGGER.debug("Parser WS close failed", exc_info=True)
 
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return {"ok": False, "error": "Orchestrator returned invalid JSON"}
+    @staticmethod
+    def _socket_is_open(socket: Any) -> bool:
+        state = getattr(socket, "state", None)
+        if state is not None:
+            state_text = str(state).lower()
+            if "closed" in state_text or "closing" in state_text:
+                return False
+            return True
 
-        if not isinstance(data, dict):
-            return {"ok": False, "error": "Orchestrator response is not a JSON object"}
-        return data
+        closed = getattr(socket, "closed", None)
+        if isinstance(closed, bool):
+            return not closed
+        return True
