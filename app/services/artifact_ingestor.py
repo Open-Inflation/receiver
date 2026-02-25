@@ -49,6 +49,7 @@ class ArtifactIngestor:
                 "source": None,
             }
 
+        image_url_lookup = self._build_image_url_lookup(run.image_results_json)
         normalized_payload = payload
         dataclass_validated = False
         dataclass_validation_error: str | None = None
@@ -75,6 +76,7 @@ class ArtifactIngestor:
             run=run,
             payload=normalized_payload,
             source=source,
+            image_url_lookup=image_url_lookup,
             dataclass_validated=dataclass_validated,
             dataclass_validation_error=dataclass_validation_error,
         )
@@ -250,6 +252,7 @@ class ArtifactIngestor:
         run: TaskRun,
         payload: dict[str, Any],
         source: str,
+        image_url_lookup: dict[str, dict[str, str]],
         dataclass_validated: bool,
         dataclass_validation_error: str | None,
     ) -> RunArtifact:
@@ -308,7 +311,11 @@ class ArtifactIngestor:
             for sort_order, product_payload in enumerate(products):
                 if not isinstance(product_payload, dict):
                     continue
-                product = self._build_product(product_payload, sort_order=sort_order)
+                product = self._build_product(
+                    product_payload,
+                    sort_order=sort_order,
+                    image_url_lookup=image_url_lookup,
+                )
                 artifact.products.append(product)
 
         session.add(artifact)
@@ -351,8 +358,16 @@ class ArtifactIngestor:
                     depth=depth + 1,
                 )
 
-    def _build_product(self, payload: dict[str, Any], *, sort_order: int) -> RunArtifactProduct:
+    def _build_product(
+        self,
+        payload: dict[str, Any],
+        *,
+        sort_order: int,
+        image_url_lookup: dict[str, dict[str, str]],
+    ) -> RunArtifactProduct:
         categories_uid = self._normalize_string_list(payload.get("categories_uid"))
+        main_image_path = self._safe_str(payload.get("main_image"))
+        main_image_value = self._resolve_image_url(main_image_path, image_url_lookup) or main_image_path
 
         product = RunArtifactProduct(
             sku=self._safe_str(payload.get("sku")),
@@ -382,14 +397,14 @@ class ArtifactIngestor:
             package_quantity=self._as_float(payload.get("package_quantity")),
             package_unit=self._safe_str(payload.get("package_unit")),
             categories_uid_json=categories_uid or None,
-            main_image=self._safe_str(payload.get("main_image")),
+            main_image=main_image_value,
             sort_order=sort_order,
         )
 
-        if product.main_image is not None:
+        if main_image_path is not None:
             product.images.append(
                 RunArtifactProductImage(
-                    url=product.main_image,
+                    url=main_image_value,
                     is_main=True,
                     sort_order=0,
                 )
@@ -401,9 +416,10 @@ class ArtifactIngestor:
                 image_url = self._safe_str(raw_image)
                 if image_url is None:
                     continue
+                storage_url = self._resolve_image_url(image_url, image_url_lookup) or image_url
                 product.images.append(
                     RunArtifactProductImage(
-                        url=image_url,
+                        url=storage_url,
                         is_main=False,
                         sort_order=index,
                     )
@@ -551,3 +567,70 @@ class ArtifactIngestor:
         if len(error_text) <= limit:
             return error_text
         return f"{error_text[:limit]}... [truncated]"
+
+    @staticmethod
+    def _normalize_image_key(path: str) -> str:
+        normalized = path.strip().replace("\\", "/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        return normalized.lstrip("/")
+
+    def _build_image_url_lookup(self, image_results: Any) -> dict[str, dict[str, str]]:
+        by_path: dict[str, str] = {}
+        by_path_lower: dict[str, str] = {}
+        basename_values: dict[str, str] = {}
+        basename_counts: dict[str, int] = {}
+
+        if not isinstance(image_results, list):
+            return {
+                "by_path": by_path,
+                "by_path_lower": by_path_lower,
+                "by_basename_unique": {},
+            }
+
+        for item in image_results:
+            if not isinstance(item, dict):
+                continue
+            uploaded_url = self._safe_str(item.get("uploaded_url"))
+            if uploaded_url is None:
+                continue
+
+            source_path = self._safe_str(item.get("source_path")) or self._safe_str(item.get("archive_path"))
+            if source_path:
+                key = self._normalize_image_key(source_path)
+                by_path[key] = uploaded_url
+                by_path_lower[key.lower()] = uploaded_url
+
+            filename = self._safe_str(item.get("filename"))
+            if filename:
+                base_key = Path(filename).name.lower()
+                basename_counts[base_key] = basename_counts.get(base_key, 0) + 1
+                if base_key not in basename_values:
+                    basename_values[base_key] = uploaded_url
+
+        by_basename_unique = {
+            key: value
+            for key, value in basename_values.items()
+            if basename_counts.get(key, 0) == 1
+        }
+        return {
+            "by_path": by_path,
+            "by_path_lower": by_path_lower,
+            "by_basename_unique": by_basename_unique,
+        }
+
+    def _resolve_image_url(self, source_path: str | None, lookup: dict[str, dict[str, str]]) -> str | None:
+        if source_path is None:
+            return None
+        key = self._normalize_image_key(source_path)
+
+        direct = lookup.get("by_path", {}).get(key)
+        if direct:
+            return direct
+
+        lowered = lookup.get("by_path_lower", {}).get(key.lower())
+        if lowered:
+            return lowered
+
+        basename_key = Path(key).name.lower()
+        return lookup.get("by_basename_unique", {}).get(basename_key)

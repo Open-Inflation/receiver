@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import tarfile
 
 from sqlalchemy import func, select
 
@@ -106,6 +108,28 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
 
     artifact_path = tmp_path / "artifact.json"
     artifact_path.write_text(json.dumps(artifact_payload, ensure_ascii=False), encoding="utf-8")
+    archive_path = tmp_path / "artifact.tar.gz"
+    gallery_bytes = b"gallery-bytes"
+    main_bytes = b"main-bytes"
+    with tarfile.open(archive_path, mode="w:gz") as archive:
+        member_main = tarfile.TarInfo(name="images/main.jpg")
+        member_main.size = len(main_bytes)
+        archive.addfile(member_main, io.BytesIO(main_bytes))
+
+        member_gallery = tarfile.TarInfo(name="images/gallery_1.jpg")
+        member_gallery.size = len(gallery_bytes)
+        archive.addfile(member_gallery, io.BytesIO(gallery_bytes))
+
+    def fake_upload(*, filename: str, image_bytes: bytes) -> str:
+        if filename == "main.jpg":
+            assert image_bytes == main_bytes
+            return "http://storage.local/images/main.jpg"
+        if filename == "gallery_1.jpg":
+            assert image_bytes == gallery_bytes
+            return "http://storage.local/images/gallery_1.jpg"
+        raise AssertionError(f"unexpected filename {filename}")
+
+    client.app.state.image_pipeline._upload_to_storage = fake_upload
 
     create_task = client.post(
         "/api/tasks",
@@ -129,6 +153,8 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
             "run_id": run_id,
             "status": "success",
             "output_json": str(artifact_path),
+            "output_gz": str(archive_path),
+            "upload_images_from_archive": True,
         },
     )
     assert finish.status_code == 200
@@ -139,6 +165,22 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
         assert artifact is not None
         assert artifact.source == "output_json"
         assert artifact.code == "C001"
+
+        product = session.scalar(
+            select(RunArtifactProduct).where(RunArtifactProduct.artifact_id == artifact.id)
+        )
+        assert product is not None
+        assert product.main_image == "http://storage.local/images/main.jpg"
+
+        product_images = session.scalars(
+            select(RunArtifactProductImage)
+            .where(RunArtifactProductImage.product_id == product.id)
+            .order_by(RunArtifactProductImage.sort_order.asc())
+        ).all()
+        assert [row.url for row in product_images] == [
+            "http://storage.local/images/main.jpg",
+            "http://storage.local/images/gallery_1.jpg",
+        ]
 
         categories_count = session.scalar(
             select(func.count(RunArtifactCategory.id)).where(RunArtifactCategory.artifact_id == artifact.id)

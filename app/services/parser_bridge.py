@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import logging
 import sys
 from pathlib import Path
@@ -37,31 +36,10 @@ class ParserBridge:
             self._normalize_city_id = getattr(models_module, "normalize_city_id", None)
             self._enabled = bool(self._parse_request or self._normalize_city_id)
         except Exception as exc:
-            LOGGER.warning("Parser package import failed, trying lightweight fallback: %s", exc)
-            self._load_lightweight_fallback(parser_src_path)
+            LOGGER.warning("Parser package import failed: %s", exc)
 
         if not self._enabled:
             LOGGER.warning("Parser integration disabled")
-
-    def _load_lightweight_fallback(self, parser_src_path: Path) -> None:
-        models_path = parser_src_path / "openinflation_parser" / "orchestration" / "models.py"
-        if not models_path.exists():
-            return
-
-        spec = importlib.util.spec_from_file_location("receiver_parser_models", models_path)
-        if spec is None or spec.loader is None:
-            return
-
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        try:
-            spec.loader.exec_module(module)
-        except Exception as exc:
-            LOGGER.warning("Parser fallback import failed: %s", exc)
-            return
-
-        self._normalize_city_id = getattr(module, "normalize_city_id", None)
-        self._enabled = bool(self._normalize_city_id)
 
     @property
     def enabled(self) -> bool:

@@ -30,6 +30,7 @@ class ImagePipeline:
             content_base64 = getattr(image, "content_base64", None)
             result: dict[str, str | None] = {
                 "filename": filename,
+                "source_path": filename,
                 "uploaded_url": None,
                 "error": None,
             }
@@ -78,6 +79,7 @@ class ImagePipeline:
 
                     result: dict[str, str | None] = {
                         "filename": filename,
+                        "source_path": member.name,
                         "uploaded_url": None,
                         "error": None,
                     }
