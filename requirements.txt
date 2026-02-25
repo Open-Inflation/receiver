@@ -1,0 +1,6 @@
+fastapi>=0.116.0
+uvicorn>=0.35.0
+sqlalchemy>=2.0.40
+pymysql>=1.1.1
+httpx>=0.28.1
+pytest>=8.4.2
