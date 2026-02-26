@@ -23,16 +23,22 @@ class ImagePipeline:
         storage_api_token: str,
         timeout_seconds: float = 30.0,
         max_parallel_uploads: int = 8,
+        image_archive_max_file_bytes: int = 12 * 1024 * 1024,
+        image_archive_max_files: int = 2000,
     ):
         self.storage_base_url = storage_base_url.rstrip("/")
         self.storage_api_token = storage_api_token
         self.timeout_seconds = timeout_seconds
         self.max_parallel_uploads = max(1, int(max_parallel_uploads))
+        self.image_archive_max_file_bytes = max(1, int(image_archive_max_file_bytes))
+        self.image_archive_max_files = max(1, int(image_archive_max_files))
         LOGGER.info(
-            "ImagePipeline initialized: storage_base_url=%s max_parallel_uploads=%s timeout_seconds=%.1f",
+            "ImagePipeline initialized: storage_base_url=%s max_parallel_uploads=%s timeout_seconds=%.1f image_archive_max_file_bytes=%s image_archive_max_files=%s",
             self.storage_base_url,
             self.max_parallel_uploads,
             self.timeout_seconds,
+            self.image_archive_max_file_bytes,
+            self.image_archive_max_files,
         )
 
     def process_images(self, images: Iterable[object]) -> list[dict[str, str | None]]:
@@ -141,15 +147,29 @@ class ImagePipeline:
         indexed_results: dict[int, dict[str, str | None]] = {}
         in_flight: dict[Future[dict[str, str | None]], int] = {}
         next_index = 0
-        max_in_flight = max(1, self.max_parallel_uploads * 2)
+        max_in_flight = self.max_parallel_uploads
+        processed_files = 0
 
         with ThreadPoolExecutor(max_workers=self.max_parallel_uploads) as pool:
-            with tarfile.open(path, mode="r:gz") as archive:
-                for member in archive.getmembers():
+            with tarfile.open(path, mode="r|gz") as archive:
+                for member in archive:
                     if not member.isfile():
                         continue
                     if not member.name.startswith("images/"):
                         continue
+                    if processed_files >= self.image_archive_max_files:
+                        index = next_index
+                        next_index += 1
+                        indexed_results[index] = {
+                            "filename": None,
+                            "source_path": member.name,
+                            "uploaded_url": None,
+                            "error": (
+                                "Archive image file limit exceeded "
+                                f"({self.image_archive_max_files})"
+                            ),
+                        }
+                        break
 
                     filename = Path(member.name).name
                     if not filename:
@@ -157,6 +177,19 @@ class ImagePipeline:
 
                     index = next_index
                     next_index += 1
+                    processed_files += 1
+
+                    if member.size > self.image_archive_max_file_bytes:
+                        indexed_results[index] = {
+                            "filename": filename,
+                            "source_path": member.name,
+                            "uploaded_url": None,
+                            "error": (
+                                f"Archive image is too large ({member.size} bytes), "
+                                f"limit is {self.image_archive_max_file_bytes}"
+                            ),
+                        }
+                        continue
 
                     try:
                         extracted = archive.extractfile(member)
@@ -168,7 +201,18 @@ class ImagePipeline:
                                 "error": "Archive entry has no data stream",
                             }
                             continue
-                        raw_bytes = extracted.read()
+                        raw_bytes = extracted.read(self.image_archive_max_file_bytes + 1)
+                        if len(raw_bytes) > self.image_archive_max_file_bytes:
+                            indexed_results[index] = {
+                                "filename": filename,
+                                "source_path": member.name,
+                                "uploaded_url": None,
+                                "error": (
+                                    "Archive image payload exceeds size limit "
+                                    f"{self.image_archive_max_file_bytes}"
+                                ),
+                            }
+                            continue
                     except Exception as exc:
                         indexed_results[index] = {
                             "filename": filename,

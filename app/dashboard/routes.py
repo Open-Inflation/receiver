@@ -257,6 +257,7 @@ def create_dashboard_router(
                     CrawlTask.city,
                     CrawlTask.store,
                     TaskRun.processed_images,
+                    TaskRun.dispatch_meta_json,
                 )
                 .join(Orchestrator, Orchestrator.id == TaskRun.orchestrator_id)
                 .join(CrawlTask, CrawlTask.id == TaskRun.task_id)
@@ -275,7 +276,14 @@ def create_dashboard_router(
                 city,
                 store,
                 processed_images,
+                run_dispatch_meta,
             ) in recent_rows:
+                run_meta = dispatch_meta(run_dispatch_meta)
+                remote_status = str(run_meta.get("remote_status", "")).strip().lower() or None
+                remote_terminal = remote_status in {"success", "error"}
+                remote_job_id = run_meta.get("remote_job_id")
+                has_remote_job_id = isinstance(remote_job_id, str) and bool(remote_job_id.strip())
+                local_terminal = str(run_status).strip().lower() in {"success", "error"}
                 recent_runs.append(
                     {
                         "id": run_id,
@@ -287,6 +295,9 @@ def create_dashboard_router(
                         "city": city,
                         "store": store,
                         "processed_images": int(processed_images or 0),
+                        "remote_status": remote_status,
+                        "remote_terminal": bool(remote_terminal),
+                        "can_open_live_log": bool(not local_terminal and not remote_terminal and has_remote_job_id),
                     }
                 )
 

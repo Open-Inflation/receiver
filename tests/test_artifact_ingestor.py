@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 import tarfile
 
 from sqlalchemy import func, select
 
+from app.services.artifact_ingestor import ArtifactIngestor
 from app.models import (
     RunArtifact,
     RunArtifactCategory,
@@ -202,6 +204,72 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
         assert product_categories_count == 2
     finally:
         session.close()
+
+
+def test_artifact_download_size_limit(monkeypatch):
+    ingestor = ArtifactIngestor(
+        parser_src_path=(Path(__file__).resolve().parents[2] / "parser" / "src"),
+        download_max_bytes=5,
+        json_member_max_bytes=1024,
+    )
+
+    class _FakeResponse:
+        def __init__(self):
+            self._chunks = [b"123", b"456"]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            for chunk in self._chunks:
+                yield chunk
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, _method, _url):
+            return _FakeResponse()
+
+    monkeypatch.setattr("app.services.artifact_ingestor.httpx.Client", _FakeClient)
+
+    payload, error = ingestor._load_from_download_url("http://example.test/artifact", expected_sha256=None)
+    assert payload is None
+    assert error is not None
+    assert "exceeds limit" in error.lower()
+
+
+def test_artifact_json_member_size_limit():
+    ingestor = ArtifactIngestor(
+        parser_src_path=(Path(__file__).resolve().parents[2] / "parser" / "src"),
+        download_max_bytes=1024 * 1024,
+        json_member_max_bytes=24,
+    )
+
+    oversized_payload = {"key": "x" * 200}
+    archive_bytes = io.BytesIO()
+    encoded = json.dumps(oversized_payload).encode("utf-8")
+    with tarfile.open(fileobj=archive_bytes, mode="w:gz") as archive:
+        member = tarfile.TarInfo(name="meta.json")
+        member.size = len(encoded)
+        archive.addfile(member, io.BytesIO(encoded))
+
+    payload, error = ingestor._extract_json_payload(archive_bytes.getvalue())
+    assert payload is None
+    assert error is not None
+    assert "too large" in error.lower()
 
 
 def test_ingest_is_idempotent_for_same_run(client, tmp_path):

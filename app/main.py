@@ -69,12 +69,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or load_settings()
     safe_database_url = make_url(app_settings.database_url).render_as_string(hide_password=True)
     LOGGER.info(
-        "Initializing receiver app: db_url=%s ws_url=%s auto_dispatch=%s image_upload_parallelism=%s ws_request_timeout_sec=%.1f",
+        "Initializing receiver app: db_url=%s ws_url=%s auto_dispatch=%s image_upload_parallelism=%s ws_request_timeout_sec=%.1f max_claims_per_cycle=%s assigned_parallelism=%s",
         safe_database_url,
         app_settings.orchestrator_ws_url,
         app_settings.orchestrator_auto_dispatch_enabled,
         app_settings.image_upload_parallelism,
         app_settings.orchestrator_ws_request_timeout_sec,
+        app_settings.orchestrator_max_claims_per_cycle,
+        app_settings.orchestrator_assigned_parallelism,
     )
 
     _ensure_sqlite_parent_dir(app_settings.database_url)
@@ -88,8 +90,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         storage_base_url=app_settings.storage_base_url,
         storage_api_token=app_settings.storage_api_token,
         max_parallel_uploads=app_settings.image_upload_parallelism,
+        image_archive_max_file_bytes=app_settings.image_archive_max_file_bytes,
+        image_archive_max_files=app_settings.image_archive_max_files,
     )
-    artifact_ingestor = ArtifactIngestor(parser_src_path=app_settings.parser_src_path)
+    artifact_ingestor = ArtifactIngestor(
+        parser_src_path=app_settings.parser_src_path,
+        download_max_bytes=app_settings.artifact_download_max_bytes,
+        json_member_max_bytes=app_settings.artifact_json_member_max_bytes,
+    )
     ws_bridge = ParserWsBridge(
         session_factory=session_factory,
         parser_bridge=parser_bridge,
@@ -100,6 +108,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ws_password=app_settings.orchestrator_ws_password,
         poll_interval_sec=app_settings.orchestrator_poll_interval_sec,
         ws_request_timeout_sec=app_settings.orchestrator_ws_request_timeout_sec,
+        max_claims_per_cycle=app_settings.orchestrator_max_claims_per_cycle,
+        assigned_parallelism=app_settings.orchestrator_assigned_parallelism,
         manager_name=app_settings.orchestrator_manager_name,
         submit_include_images=app_settings.orchestrator_submit_include_images,
         submit_full_catalog=app_settings.orchestrator_submit_full_catalog,

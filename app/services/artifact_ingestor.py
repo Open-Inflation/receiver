@@ -32,9 +32,17 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ArtifactIngestor:
-    def __init__(self, *, parser_src_path: Path):
+    def __init__(
+        self,
+        *,
+        parser_src_path: Path,
+        download_max_bytes: int = 256 * 1024 * 1024,
+        json_member_max_bytes: int = 16 * 1024 * 1024,
+    ):
         self._from_json: Any = None
         self._retail_unit_model: Any = None
+        self._download_max_bytes = max(1, int(download_max_bytes))
+        self._json_member_max_bytes = max(1, int(json_member_max_bytes))
         self._init_dataclass_support(parser_src_path)
 
     @property
@@ -201,12 +209,32 @@ class ArtifactIngestor:
         path = Path(token)
         if path.is_file():
             try:
+                file_size = path.stat().st_size
+            except OSError:
+                file_size = None
+            if file_size is not None and file_size > self._json_member_max_bytes:
+                return (
+                    None,
+                    (
+                        f"output_json file is too large ({file_size} bytes), "
+                        f"limit is {self._json_member_max_bytes}"
+                    ),
+                )
+            try:
                 return self._loads_json(path.read_text(encoding="utf-8")), None
             except Exception as exc:
                 return None, f"failed to parse JSON file {path}: {exc}"
 
         # Some clients may send payload itself instead of a path.
         if token.startswith("{"):
+            if len(token.encode("utf-8")) > self._json_member_max_bytes:
+                return (
+                    None,
+                    (
+                        "output_json payload is too large "
+                        f"(limit {self._json_member_max_bytes} bytes)"
+                    ),
+                )
             try:
                 return self._loads_json(token), None
             except Exception as exc:
@@ -219,11 +247,27 @@ class ArtifactIngestor:
             return None, f"archive file does not exist: {archive_path}"
 
         try:
-            payload = archive_path.read_bytes()
+            with tarfile.open(archive_path, mode="r:gz") as archive:
+                return self._extract_json_from_tar(archive)
+        except tarfile.ReadError:
+            try:
+                file_size = archive_path.stat().st_size
+                if file_size > self._json_member_max_bytes:
+                    return (
+                        None,
+                        (
+                            f"archive payload is too large ({file_size} bytes), "
+                            f"limit is {self._json_member_max_bytes}"
+                        ),
+                    )
+            except OSError:
+                pass
+            try:
+                return self._loads_json(archive_path.read_text(encoding="utf-8")), None
+            except Exception as exc:
+                return None, f"payload is neither tar.gz nor JSON: {exc}"
         except Exception as exc:
             return None, f"failed to read archive file {archive_path}: {exc}"
-
-        return self._extract_json_payload(payload)
 
     def _load_from_download_url(
         self,
@@ -233,14 +277,31 @@ class ArtifactIngestor:
     ) -> tuple[dict[str, Any] | None, str | None]:
         try:
             with httpx.Client(timeout=60.0, follow_redirects=True) as client:
-                response = client.get(url)
-                response.raise_for_status()
+                with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    payload_parts: list[bytes] = []
+                    payload_size = 0
+                    sha256 = hashlib.sha256()
+                    for chunk in response.iter_bytes():
+                        if not chunk:
+                            continue
+                        payload_size += len(chunk)
+                        if payload_size > self._download_max_bytes:
+                            return (
+                                None,
+                                (
+                                    f"downloaded payload exceeds limit "
+                                    f"{self._download_max_bytes} bytes"
+                                ),
+                            )
+                        payload_parts.append(chunk)
+                        sha256.update(chunk)
         except Exception as exc:
             return None, f"failed to download artifact: {exc}"
 
-        payload = response.content
+        payload = b"".join(payload_parts)
         if expected_sha256:
-            actual_sha256 = hashlib.sha256(payload).hexdigest()
+            actual_sha256 = sha256.hexdigest()
             if actual_sha256 != expected_sha256:
                 return None, "downloaded payload checksum mismatch"
 
@@ -249,22 +310,16 @@ class ArtifactIngestor:
     def _extract_json_payload(self, payload: bytes) -> tuple[dict[str, Any] | None, str | None]:
         try:
             with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
-                prioritized_members = ["meta.json", "output.json", "result.json"]
-                for member_name in prioritized_members:
-                    member = archive.getmember(member_name) if member_name in archive.getnames() else None
-                    if member is None:
-                        continue
-                    parsed = self._load_json_member(archive, member)
-                    if parsed is not None:
-                        return parsed, None
-
-                for member in archive.getmembers():
-                    if not member.isfile() or not member.name.lower().endswith(".json"):
-                        continue
-                    parsed = self._load_json_member(archive, member)
-                    if parsed is not None:
-                        return parsed, None
+                return self._extract_json_from_tar(archive)
         except tarfile.ReadError:
+            if len(payload) > self._json_member_max_bytes:
+                return (
+                    None,
+                    (
+                        "JSON payload is too large "
+                        f"(limit {self._json_member_max_bytes} bytes)"
+                    ),
+                )
             try:
                 return self._loads_json(payload.decode("utf-8")), None
             except Exception as exc:
@@ -272,18 +327,65 @@ class ArtifactIngestor:
         except Exception as exc:
             return None, f"failed to extract JSON from archive: {exc}"
 
+    def _extract_json_from_tar(self, archive: tarfile.TarFile) -> tuple[dict[str, Any] | None, str | None]:
+        prioritized_members = {"meta.json": 0, "output.json": 1, "result.json": 2}
+        best_payload: dict[str, Any] | None = None
+        best_priority = 10
+        first_error: str | None = None
+
+        for member in archive:
+            if not member.isfile() or not member.name.lower().endswith(".json"):
+                continue
+            parsed, error = self._load_json_member(archive, member)
+            if parsed is None:
+                if first_error is None and error:
+                    first_error = error
+                continue
+
+            member_name = Path(member.name).name.lower()
+            priority = prioritized_members.get(member_name, 3)
+            if priority < best_priority:
+                best_payload = parsed
+                best_priority = priority
+                if priority == 0:
+                    break
+
+        if best_payload is not None:
+            return best_payload, None
+        if first_error is not None:
+            return None, first_error
         return None, "archive does not contain JSON artifact"
 
-    def _load_json_member(self, archive: tarfile.TarFile, member: tarfile.TarInfo) -> dict[str, Any] | None:
+    def _load_json_member(
+        self,
+        archive: tarfile.TarFile,
+        member: tarfile.TarInfo,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if member.size > self._json_member_max_bytes:
+            return (
+                None,
+                (
+                    f"JSON member {member.name} is too large ({member.size} bytes), "
+                    f"limit is {self._json_member_max_bytes}"
+                ),
+            )
         extracted = archive.extractfile(member)
         if extracted is None:
-            return None
+            return None, f"failed to read archive member: {member.name}"
 
         try:
-            raw = extracted.read()
-            return self._loads_json(raw.decode("utf-8"))
-        except Exception:
-            return None
+            raw = extracted.read(self._json_member_max_bytes + 1)
+            if len(raw) > self._json_member_max_bytes:
+                return (
+                    None,
+                    (
+                        f"JSON member {member.name} payload exceeds limit "
+                        f"{self._json_member_max_bytes} bytes"
+                    ),
+                )
+            return self._loads_json(raw.decode("utf-8")), None
+        except Exception as exc:
+            return None, f"failed to parse JSON member {member.name}: {exc}"
 
     @staticmethod
     def _loads_json(payload: str) -> dict[str, Any]:

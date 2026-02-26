@@ -97,6 +97,11 @@ class TaskRun(Base):
         cascade="all, delete-orphan",
     )
 
+    __table_args__ = (
+        Index("ix_task_runs_status_task_id", "status", "task_id"),
+        Index("ix_task_runs_assigned_at", "assigned_at"),
+    )
+
 
 class RunArtifact(Base):
     __tablename__ = "run_artifacts"

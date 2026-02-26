@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy.exc import IntegrityError
+
 from app.database import Base, create_session_factory, create_sqlalchemy_engine
 from app.models import CrawlTask, Orchestrator, TaskRun
 from app.services.scheduler import claim_next_due_task, utcnow
@@ -118,6 +120,78 @@ def test_claim_next_due_task_skips_task_with_existing_assigned_run(tmp_path):
             lease_ttl_minutes=30,
         )
         assert claimed is None
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_claim_next_due_task_tolerates_integrity_race(tmp_path, monkeypatch):
+    db_url = f"sqlite:///{tmp_path / 'scheduler-integrity.sqlite3'}"
+    engine = create_sqlalchemy_engine(db_url)
+    session_factory = create_session_factory(engine)
+    Base.metadata.create_all(bind=engine)
+
+    seed_session = session_factory()
+    try:
+        now = utcnow()
+        orchestrator = Orchestrator(
+            id="o" * 32,
+            name="orch-scheduler-integrity",
+            token="t" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        task1 = CrawlTask(
+            city="Moscow",
+            store="C201",
+            frequency_hours=1,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+            last_crawl_at=None,
+        )
+        task2 = CrawlTask(
+            city="Moscow",
+            store="C202",
+            frequency_hours=1,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+            last_crawl_at=None,
+        )
+        seed_session.add_all([orchestrator, task1, task2])
+        seed_session.commit()
+    finally:
+        seed_session.close()
+
+    session = session_factory()
+    try:
+        orchestrator = session.get(Orchestrator, "o" * 32)
+        assert orchestrator is not None
+
+        real_commit = session.commit
+        state = {"calls": 0}
+
+        def flaky_commit() -> None:
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise IntegrityError("insert task_runs", {}, RuntimeError("duplicate assigned"))
+            real_commit()
+
+        monkeypatch.setattr(session, "commit", flaky_commit)
+
+        claimed = claim_next_due_task(
+            session,
+            orchestrator=orchestrator,
+            lease_ttl_minutes=30,
+        )
+        assert claimed is not None
+        claimed_task, run = claimed
+        assert claimed_task.store == "C202"
+        assert run.status == "assigned"
     finally:
         session.close()
         engine.dispose()

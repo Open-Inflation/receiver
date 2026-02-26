@@ -330,6 +330,13 @@ td select {
   align-items: baseline;
 }
 
+.chip-set {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .chip {
   border-radius: 999px;
   padding: 2px 10px;
@@ -341,6 +348,20 @@ td select {
 .chip.success { border-color: rgba(61, 223, 154, 0.62); color: var(--ok); }
 .chip.error { border-color: rgba(255, 111, 132, 0.62); color: var(--err); }
 .chip.assigned { border-color: rgba(255, 204, 77, 0.6); color: var(--warn); }
+.chip.running,
+.chip.queued,
+.chip.waiting {
+  border-color: rgba(59, 213, 255, 0.6);
+  color: var(--accent);
+}
+.chip.unknown {
+  border-color: rgba(163, 182, 225, 0.48);
+  color: var(--muted);
+}
+
+.remote-chip {
+  border-style: dashed;
+}
 
 .muted { color: var(--muted); }
 .mono { font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace; }

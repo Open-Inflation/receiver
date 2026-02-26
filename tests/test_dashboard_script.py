@@ -176,6 +176,13 @@ def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
             first_payload = websocket.receive_json()
             second_payload = websocket.receive_json()
 
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        recent = overview.json()["recent_runs"][0]
+        assert recent["remote_status"] is None
+        assert recent["remote_terminal"] is False
+        assert recent["can_open_live_log"] is True
+
     assert first_payload["event"] == "snapshot"
     assert first_payload["lines"] == ["line-a", "line-b"]
     assert second_payload["event"] == "end"
@@ -186,3 +193,53 @@ def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
     assert sent_payload["job_id"] == "job-123"
     assert sent_payload["tail_lines"] == 2
     assert sent_payload["password"] == "top-secret"
+
+
+def test_dashboard_overview_remote_terminal_disables_live_log(tmp_path: Path):
+    app = create_dashboard_app(_settings(tmp_path))
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        task = CrawlTask(
+            city="Moscow",
+            store="C778",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        orchestrator = Orchestrator(
+            id="o" * 32,
+            name="parser-ws",
+            token="t" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        session.add(task)
+        session.add(orchestrator)
+        session.commit()
+        session.refresh(task)
+
+        run = TaskRun(
+            id="z" * 32,
+            task_id=task.id,
+            orchestrator_id=orchestrator.id,
+            status="assigned",
+            assigned_at=now,
+            dispatch_meta_json={"remote_job_id": "job-778", "remote_status": "success"},
+        )
+        session.add(run)
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        recent = overview.json()["recent_runs"][0]
+        assert recent["status"] == "assigned"
+        assert recent["remote_status"] == "success"
+        assert recent["remote_terminal"] is True
+        assert recent["can_open_live_log"] is False

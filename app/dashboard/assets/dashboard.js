@@ -272,19 +272,33 @@
       }
       runListEl.innerHTML = runs.map((run) => {
         const isDone = run.status === 'success' || run.status === 'error';
-        const attrs = isDone
-          ? ''
-          : ` data-run-id="${run.id}" tabindex="0" role="button" aria-label="Открыть live-лог run ${run.id.slice(0, 12)}"`;
+        const canOpenLiveLog = !!run.can_open_live_log;
+        const remoteStatus = typeof run.remote_status === 'string' && run.remote_status
+          ? run.remote_status
+          : 'unknown';
+        const attrs = canOpenLiveLog
+          ? ` data-run-id="${run.id}" tabindex="0" role="button" aria-label="Открыть live-лог run ${run.id.slice(0, 12)}"`
+          : '';
+        const liveLogText = canOpenLiveLog
+          ? 'клик: live worker log'
+          : (isDone
+            ? 'лог недоступен: run завершен'
+            : (run.remote_terminal
+              ? `лог недоступен: remote ${remoteStatus}`
+              : 'лог недоступен: нет remote job'));
         return `
-        <article class="run ${isDone ? 'done' : ''}"${attrs}>
+        <article class="run ${canOpenLiveLog ? '' : 'done'}"${attrs}>
           <div class="row-top">
             <strong class="mono">${run.id.slice(0, 12)}</strong>
-            <span class="chip ${run.status}">${run.status}</span>
+            <div class="chip-set">
+              <span class="chip ${run.status}">run:${run.status}</span>
+              <span class="chip remote-chip ${remoteStatus}">remote:${remoteStatus}</span>
+            </div>
           </div>
           <div class="muted">task #${run.task_id} • ${run.city || '—'} / ${run.store || '—'}</div>
           <div class="muted">orch: ${run.orchestrator_name || '—'}</div>
           <div class="muted">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
-          <div class="muted">${isDone ? 'лог недоступен: run завершен' : 'клик: live worker log'}</div>
+          <div class="muted">${liveLogText}</div>
         </article>
       `;
       }).join('');

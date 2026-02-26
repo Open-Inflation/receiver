@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import case, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import CrawlTask, Orchestrator, TaskRun
@@ -77,38 +78,39 @@ def claim_next_due_task(
 ) -> tuple[CrawlTask, TaskRun] | None:
     now = utcnow()
     lease_until = now + timedelta(minutes=max(1, lease_ttl_minutes))
-    assigned_task_ids = set(
-        session.scalars(select(TaskRun.task_id).where(TaskRun.status == "assigned")).all()
+    assigned_exists = (
+        select(TaskRun.id)
+        .where(
+            TaskRun.task_id == CrawlTask.id,
+            TaskRun.status == "assigned",
+        )
+        .exists()
     )
 
-    candidates = session.scalars(
+    candidates = session.execute(
         select(CrawlTask)
         .where(CrawlTask.is_active.is_(True), CrawlTask.deleted_at.is_(None))
+        .where(or_(CrawlTask.lease_until.is_(None), CrawlTask.lease_until <= now))
+        .where(~assigned_exists)
         .order_by(
             case((CrawlTask.last_crawl_at.is_(None), 0), else_=1).asc(),
             CrawlTask.last_crawl_at.asc(),
             CrawlTask.id.asc(),
         )
-    ).all()
+        .execution_options(stream_results=True)
+    ).scalars()
     LOGGER.debug(
-        "Claim scan started: orchestrator_id=%s candidates=%s lease_ttl_minutes=%s",
+        "Claim scan started: orchestrator_id=%s lease_ttl_minutes=%s",
         orchestrator.id,
-        len(candidates),
         lease_ttl_minutes,
     )
-    skipped_leased = 0
+    scanned = 0
     skipped_not_due = 0
-    skipped_already_assigned = 0
     skipped_update_conflict = 0
+    skipped_duplicate_race = 0
 
     for candidate in candidates:
-        if candidate.id in assigned_task_ids:
-            skipped_already_assigned += 1
-            continue
-        lease_until_candidate = as_utc(candidate.lease_until)
-        if lease_until_candidate is not None and lease_until_candidate > now:
-            skipped_leased += 1
-            continue
+        scanned += 1
         if not is_task_due(candidate, now=now):
             skipped_not_due += 1
             continue
@@ -144,13 +146,25 @@ def claim_next_due_task(
             assigned_at=now,
         )
         session.add(run)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            skipped_duplicate_race += 1
+            LOGGER.debug(
+                "Task claim race detected, retrying candidate scan: task_id=%s orchestrator_id=%s",
+                candidate.id,
+                orchestrator.id,
+                exc_info=True,
+            )
+            continue
 
         claimed_task = session.get(CrawlTask, candidate.id)
         session.refresh(run)
         if claimed_task is None:
             LOGGER.warning("Claimed task disappeared after commit: task_id=%s run_id=%s", candidate.id, run.id)
             return None
+        session.refresh(claimed_task)
         LOGGER.info(
             "Task claimed: task_id=%s run_id=%s orchestrator_id=%s lease_until=%s",
             claimed_task.id,
@@ -161,12 +175,12 @@ def claim_next_due_task(
         return claimed_task, run
 
     LOGGER.debug(
-        "No due task claimed: orchestrator_id=%s skipped_already_assigned=%s skipped_leased=%s skipped_not_due=%s skipped_update_conflict=%s",
+        "No due task claimed: orchestrator_id=%s scanned=%s skipped_not_due=%s skipped_update_conflict=%s skipped_duplicate_race=%s",
         orchestrator.id,
-        skipped_already_assigned,
-        skipped_leased,
+        scanned,
         skipped_not_due,
         skipped_update_conflict,
+        skipped_duplicate_race,
     )
     return None
 
@@ -192,6 +206,7 @@ def finish_run(
 
     task = session.get(CrawlTask, run.task_id)
     if task is not None:
+        session.refresh(task)
         if status == "success":
             task.last_crawl_at = now
         if task.lease_owner_id == orchestrator.id:
