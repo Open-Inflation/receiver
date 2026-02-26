@@ -38,10 +38,23 @@
       return resp.json();
     }
 
+    function parseBackendDate(value) {
+      if (!value) return null;
+      if (value instanceof Date) return value;
+      if (typeof value !== 'string') return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const hasOffset = /([zZ]|[+\-]\d{2}:\d{2})$/.test(trimmed);
+      const normalized = hasOffset ? trimmed : `${trimmed}Z`;
+      const parsed = new Date(normalized);
+      if (Number.isNaN(parsed.getTime())) return null;
+      return parsed;
+    }
+
     function fmtDate(value) {
       if (!value) return '—';
-      const dt = new Date(value);
-      if (Number.isNaN(dt.getTime())) return value;
+      const dt = parseBackendDate(value);
+      if (!dt) return String(value);
       return dt.toLocaleString();
     }
 
@@ -158,10 +171,12 @@
     }
 
     function isDue(task) {
+      if (typeof task?.is_due === 'boolean') return task.is_due;
       if (!task.is_active) return false;
       if (!task.last_crawl_at) return true;
-      const last = new Date(task.last_crawl_at).getTime();
-      if (Number.isNaN(last)) return false;
+      const parsedLast = parseBackendDate(task.last_crawl_at);
+      if (!parsedLast) return false;
+      const last = parsedLast.getTime();
       const dueTs = last + Number(task.frequency_hours || 0) * 3600 * 1000;
       return dueTs <= Date.now();
     }

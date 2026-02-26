@@ -57,6 +57,10 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
         tasks = client.get("/api/tasks")
         assert tasks.status_code == 200
         assert len(tasks.json()) == 1
+        listed_task = tasks.json()[0]
+        assert listed_task["is_due"] is False
+        assert str(listed_task["created_at"]).endswith("+00:00")
+        assert str(listed_task["updated_at"]).endswith("+00:00")
 
         overview = client.get("/api/overview")
         assert overview.status_code == 200

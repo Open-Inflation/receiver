@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.engine import make_url
 
 from app.models import CrawlTask
+from app.services.scheduler import as_utc, is_task_due, utcnow
 
 
 def ensure_sqlite_parent_dir(database_url: str) -> None:
@@ -28,17 +30,26 @@ def dispatch_meta(payload: Any) -> dict[str, Any]:
     return payload
 
 
-def task_to_dict(task: CrawlTask) -> dict[str, object]:
+def _iso_utc(value: datetime | None) -> str | None:
+    normalized = as_utc(value)
+    if normalized is None:
+        return None
+    return normalized.isoformat()
+
+
+def task_to_dict(task: CrawlTask, *, now: datetime | None = None) -> dict[str, object]:
+    reference_time = now or utcnow()
     return {
         "id": task.id,
         "city": task.city,
         "store": task.store,
         "frequency_hours": task.frequency_hours,
-        "last_crawl_at": task.last_crawl_at.isoformat() if task.last_crawl_at else None,
+        "last_crawl_at": _iso_utc(task.last_crawl_at),
         "parser_name": task.parser_name,
         "is_active": task.is_active,
+        "is_due": bool(task.is_active and is_task_due(task, now=reference_time)),
         "lease_owner_id": task.lease_owner_id,
-        "lease_until": task.lease_until.isoformat() if task.lease_until else None,
-        "created_at": task.created_at.isoformat(),
-        "updated_at": task.updated_at.isoformat(),
+        "lease_until": _iso_utc(task.lease_until),
+        "created_at": _iso_utc(task.created_at),
+        "updated_at": _iso_utc(task.updated_at),
     }

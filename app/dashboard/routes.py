@@ -40,10 +40,11 @@ def create_dashboard_router(
     def list_tasks() -> list[dict[str, object]]:
         session = session_factory()
         try:
+            now = utcnow()
             tasks = session.scalars(
                 select(CrawlTask).where(CrawlTask.deleted_at.is_(None)).order_by(CrawlTask.id.asc())
             ).all()
-            return [task_to_dict(task) for task in tasks]
+            return [task_to_dict(task, now=now) for task in tasks]
         finally:
             session.close()
 
@@ -64,7 +65,7 @@ def create_dashboard_router(
             session.add(task)
             session.commit()
             session.refresh(task)
-            return task_to_dict(task)
+            return task_to_dict(task, now=now)
         finally:
             session.close()
 
@@ -87,7 +88,7 @@ def create_dashboard_router(
             task.updated_at = utcnow()
             session.commit()
             session.refresh(task)
-            return task_to_dict(task)
+            return task_to_dict(task, now=utcnow())
         finally:
             session.close()
 
@@ -249,8 +250,8 @@ def create_dashboard_router(
                         "id": run_id,
                         "task_id": task_id,
                         "status": run_status,
-                        "assigned_at": assigned_at.isoformat(),
-                        "finished_at": finished_at.isoformat() if finished_at else None,
+                        "assigned_at": as_utc(assigned_at).isoformat(),
+                        "finished_at": as_utc(finished_at).isoformat() if finished_at else None,
                         "orchestrator_name": orchestrator_name,
                         "city": city,
                         "store": store,
@@ -273,9 +274,9 @@ def create_dashboard_router(
                     {
                         "id": item.id,
                         "name": item.name,
-                        "created_at": item.created_at.isoformat(),
-                        "updated_at": item.updated_at.isoformat(),
-                        "last_heartbeat_at": item.last_heartbeat_at.isoformat(),
+                        "created_at": as_utc(item.created_at).isoformat(),
+                        "updated_at": as_utc(item.updated_at).isoformat(),
+                        "last_heartbeat_at": as_utc(item.last_heartbeat_at).isoformat(),
                     }
                     for item in orchestrators
                 ],
