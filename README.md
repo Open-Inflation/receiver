@@ -32,13 +32,15 @@
 
 Детальный payload скрапера и сырой список загрузки изображений в `task_runs` больше не сохраняются.
 Нормализованные данные сохраняются в `run_artifacts*`.
+В `run_artifacts` хранится `parser_name` (какой парсер выполнил обход), сырой `payload_json` не хранится.
 
-## Ручная миграция task_runs (обязательно)
+## Ручные миграции (обязательно)
 
-Перед запуском новой версии примените SQL-миграцию:
+Перед запуском новой версии примените SQL-миграции:
 
 ```bash
 mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_drop_raw_task_run_storage.sql
+mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_run_artifacts_parser_name_drop_payload.sql
 ```
 
 ## Переменные окружения

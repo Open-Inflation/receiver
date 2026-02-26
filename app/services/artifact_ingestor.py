@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import (
+    CrawlTask,
     RunArtifact,
     RunArtifactAdministrativeUnit,
     RunArtifactCategory,
@@ -285,6 +286,7 @@ class ArtifactIngestor:
             session.delete(existing)
             session.flush()
 
+        parser_name = self._resolve_parser_name(session, run=run)
         schedule_weekdays_open, schedule_weekdays_closed = self._schedule_times(payload.get("schedule_weekdays"))
         schedule_saturday_open, schedule_saturday_closed = self._schedule_times(payload.get("schedule_saturday"))
         schedule_sunday_open, schedule_sunday_closed = self._schedule_times(payload.get("schedule_sunday"))
@@ -292,6 +294,7 @@ class ArtifactIngestor:
         artifact = RunArtifact(
             run_id=run.id,
             source=source,
+            parser_name=parser_name,
             retail_type=self._safe_str(payload.get("retail_type")),
             code=self._safe_str(payload.get("code")),
             address=self._safe_str(payload.get("address")),
@@ -306,7 +309,6 @@ class ArtifactIngestor:
             latitude=self._as_float(payload.get("latitude")),
             dataclass_validated=dataclass_validated,
             dataclass_validation_error=dataclass_validation_error,
-            payload_json=payload,
         )
 
         admin_unit = payload.get("administrative_unit")
@@ -346,6 +348,18 @@ class ArtifactIngestor:
         session.commit()
         session.refresh(artifact)
         return artifact
+
+    def _resolve_parser_name(self, session: Session, *, run: TaskRun) -> str:
+        dispatch_meta = run.dispatch_meta_json if isinstance(run.dispatch_meta_json, dict) else {}
+        request_payload = dispatch_meta.get("request")
+        if isinstance(request_payload, dict):
+            parser_name = self._safe_str(request_payload.get("parser"))
+            if parser_name is not None:
+                return parser_name
+
+        task = session.get(CrawlTask, run.task_id)
+        task_parser_name = self._safe_str(task.parser_name) if task is not None else None
+        return task_parser_name or "unknown"
 
     def _append_categories(
         self,

@@ -164,6 +164,7 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
         artifact = session.scalar(select(RunArtifact).where(RunArtifact.run_id == run_id))
         assert artifact is not None
         assert artifact.source == "output_json"
+        assert artifact.parser_name == "fixprice"
         assert artifact.code == "C001"
 
         product = session.scalar(
@@ -271,5 +272,8 @@ def test_ingest_is_idempotent_for_same_run(client, tmp_path):
             select(func.count(RunArtifact.id)).where(RunArtifact.run_id == run_id)
         )
         assert artifact_rows == 1
+        artifact = session.scalar(select(RunArtifact).where(RunArtifact.run_id == run_id))
+        assert artifact is not None
+        assert artifact.parser_name == "fixprice"
     finally:
         session.close()

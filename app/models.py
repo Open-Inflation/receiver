@@ -109,6 +109,7 @@ class RunArtifact(Base):
         index=True,
     )
     source: Mapped[str] = mapped_column(String(255), nullable=False)
+    parser_name: Mapped[str] = mapped_column(String(64), nullable=False)
 
     retail_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     code: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -127,7 +128,6 @@ class RunArtifact(Base):
 
     dataclass_validated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     dataclass_validation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
