@@ -40,6 +40,8 @@ class ParserBridge:
 
         if not self._enabled:
             LOGGER.warning("Parser integration disabled")
+        else:
+            LOGGER.info("Parser integration enabled from path: %s", parser_src_path)
 
     @property
     def enabled(self) -> bool:
@@ -56,6 +58,7 @@ class ParserBridge:
                 normalized["city_id"] = self._normalize_city_id(normalized.get("city_id"))
             except Exception as exc:
                 normalized["_city_id_normalization_error"] = str(exc)
+                LOGGER.debug("city_id normalization failed: %s", exc)
 
         action = normalized.get("action")
         if self._parse_request is not None and isinstance(action, str):
@@ -67,5 +70,6 @@ class ParserBridge:
                     normalized["_parser_request"] = str(parsed)
             except Exception as exc:
                 normalized["_parser_request_error"] = str(exc)
+                LOGGER.debug("parse_request failed: %s", exc)
 
         return normalized

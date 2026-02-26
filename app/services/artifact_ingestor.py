@@ -52,6 +52,13 @@ class ArtifactIngestor:
         download_sha256: str | None = None,
         image_results: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        LOGGER.info(
+            "Artifact ingest started: run_id=%s output_json=%s output_gz=%s download_url=%s",
+            run.id,
+            bool(output_json),
+            bool(output_gz),
+            bool(download_url),
+        )
         payload, source, source_error = self._load_payload(
             run_id=run.id,
             output_json=output_json,
@@ -60,6 +67,11 @@ class ArtifactIngestor:
             download_sha256=download_sha256,
         )
         if payload is None:
+            LOGGER.warning(
+                "Artifact ingest failed: run_id=%s error=%s",
+                run.id,
+                source_error or "artifact payload not found",
+            )
             return {
                 "ok": False,
                 "error": source_error or "artifact payload not found",
@@ -98,7 +110,7 @@ class ArtifactIngestor:
             dataclass_validation_error=dataclass_validation_error,
         )
 
-        return {
+        result = {
             "ok": True,
             "source": source,
             "artifact_id": artifact.id,
@@ -107,6 +119,16 @@ class ArtifactIngestor:
             "dataclass_validated": dataclass_validated,
             "dataclass_validation_error": dataclass_validation_error,
         }
+        LOGGER.info(
+            "Artifact ingest finished: run_id=%s source=%s artifact_id=%s products=%s categories=%s dataclass_validated=%s",
+            run.id,
+            source,
+            artifact.id,
+            len(artifact.products),
+            len(artifact.categories),
+            dataclass_validated,
+        )
+        return result
 
     def _init_dataclass_support(self, parser_src_path: Path) -> None:
         candidates: list[Path] = []

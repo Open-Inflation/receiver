@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -11,6 +12,7 @@ from ..models import CrawlTask, Orchestrator, TaskRun
 
 
 TERMINAL_RUN_STATUSES = {"success", "error"}
+LOGGER = logging.getLogger(__name__)
 
 
 def utcnow() -> datetime:
@@ -39,6 +41,7 @@ def create_or_get_orchestrator(session: Session, *, name: str) -> Orchestrator:
     orchestrator = session.scalar(select(Orchestrator).where(Orchestrator.name == name))
     if orchestrator is not None:
         touch_orchestrator(session, orchestrator, commit=True)
+        LOGGER.debug("Orchestrator reused: id=%s name=%s", orchestrator.id, orchestrator.name)
         return orchestrator
 
     now = utcnow()
@@ -53,6 +56,7 @@ def create_or_get_orchestrator(session: Session, *, name: str) -> Orchestrator:
     session.add(orchestrator)
     session.commit()
     session.refresh(orchestrator)
+    LOGGER.info("Orchestrator created: id=%s name=%s", orchestrator.id, orchestrator.name)
     return orchestrator
 
 
@@ -62,6 +66,7 @@ def touch_orchestrator(session: Session, orchestrator: Orchestrator, *, commit: 
     orchestrator.updated_at = now
     if commit:
         session.commit()
+    LOGGER.debug("Orchestrator touched: id=%s commit=%s", orchestrator.id, commit)
 
 
 def claim_next_due_task(
@@ -82,6 +87,12 @@ def claim_next_due_task(
             CrawlTask.id.asc(),
         )
     ).all()
+    LOGGER.debug(
+        "Claim scan started: orchestrator_id=%s candidates=%s lease_ttl_minutes=%s",
+        orchestrator.id,
+        len(candidates),
+        lease_ttl_minutes,
+    )
 
     for candidate in candidates:
         lease_until_candidate = as_utc(candidate.lease_until)
@@ -125,9 +136,18 @@ def claim_next_due_task(
         claimed_task = session.get(CrawlTask, candidate.id)
         session.refresh(run)
         if claimed_task is None:
+            LOGGER.warning("Claimed task disappeared after commit: task_id=%s run_id=%s", candidate.id, run.id)
             return None
+        LOGGER.info(
+            "Task claimed: task_id=%s run_id=%s orchestrator_id=%s lease_until=%s",
+            claimed_task.id,
+            run.id,
+            orchestrator.id,
+            lease_until.isoformat(),
+        )
         return claimed_task, run
 
+    LOGGER.debug("No due task claimed: orchestrator_id=%s", orchestrator.id)
     return None
 
 
@@ -141,6 +161,7 @@ def finish_run(
     error_message: str | None,
 ) -> TaskRun:
     if run.status in TERMINAL_RUN_STATUSES:
+        LOGGER.debug("Run already terminal: run_id=%s status=%s", run.id, run.status)
         return run
 
     now = utcnow()
@@ -163,4 +184,12 @@ def finish_run(
 
     session.commit()
     session.refresh(run)
+    LOGGER.info(
+        "Run finished: run_id=%s task_id=%s orchestrator_id=%s status=%s processed_images=%s",
+        run.id,
+        run.task_id,
+        orchestrator.id,
+        run.status,
+        run.processed_images,
+    )
     return run

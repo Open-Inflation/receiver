@@ -5,8 +5,9 @@ from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
 import sys
+import time
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ if __package__ in {None, ""}:
 from app.config import Settings, load_settings
 from app.database import create_session_factory, create_sqlalchemy_engine
 from app.deps import get_current_orchestrator, get_db_session
+from app.logging_utils import ensure_logging_configured
 from app.models import Base, CrawlTask, Orchestrator, TaskRun
 from app.schema_patch import apply_compat_schema_patches
 from app.schemas import (
@@ -63,7 +65,15 @@ def _ensure_sqlite_parent_dir(database_url: str) -> None:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    ensure_logging_configured()
     app_settings = settings or load_settings()
+    safe_database_url = make_url(app_settings.database_url).render_as_string(hide_password=True)
+    LOGGER.info(
+        "Initializing receiver app: db_url=%s ws_url=%s auto_dispatch=%s",
+        safe_database_url,
+        app_settings.orchestrator_ws_url,
+        app_settings.orchestrator_auto_dispatch_enabled,
+    )
 
     _ensure_sqlite_parent_dir(app_settings.database_url)
     engine = create_sqlalchemy_engine(app_settings.database_url)
@@ -100,12 +110,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ws_bridge.run_forever(),
                 name="receiver-parser-ws-bridge",
             )
+            LOGGER.info("Parser WS bridge task started")
         try:
             yield
         finally:
             if bridge_task is not None:
+                LOGGER.info("Stopping parser WS bridge task")
                 await ws_bridge.stop()
                 await bridge_task
+            LOGGER.info("Disposing SQLAlchemy engine")
             engine.dispose()
 
     app = FastAPI(
@@ -123,8 +136,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.artifact_ingestor = artifact_ingestor
     app.state.parser_ws_bridge = ws_bridge
 
+    @app.middleware("http")
+    async def log_http_requests(request: Request, call_next):
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            LOGGER.exception(
+                "HTTP %s %s failed in %.2fms",
+                request.method,
+                request.url.path,
+                elapsed_ms,
+            )
+            raise
+
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        LOGGER.info(
+            "HTTP %s %s -> %s in %.2fms",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+        return response
+
     @app.get("/healthz")
     def healthcheck() -> dict[str, object]:
+        LOGGER.debug("Healthcheck requested")
         return {
             "status": "ok",
             "parser_integration": app.state.parser_bridge.enabled,
@@ -138,7 +177,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: RegisterOrchestratorIn,
         session: Session = Depends(get_db_session),
     ) -> RegisterOrchestratorOut:
-        orchestrator = create_or_get_orchestrator(session, name=payload.name.strip())
+        orchestrator_name = payload.name.strip()
+        orchestrator = create_or_get_orchestrator(session, name=orchestrator_name)
+        LOGGER.info(
+            "Orchestrator registered: id=%s name=%s",
+            orchestrator.id,
+            orchestrator_name,
+        )
         return RegisterOrchestratorOut(orchestrator_id=orchestrator.id, token=orchestrator.token)
 
     @app.post("/api/orchestrators/heartbeat", response_model=HeartbeatOut)
@@ -147,6 +192,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session: Session = Depends(get_db_session),
     ) -> HeartbeatOut:
         touch_orchestrator(session, orchestrator, commit=True)
+        LOGGER.debug(
+            "Heartbeat accepted: orchestrator_id=%s name=%s",
+            orchestrator.id,
+            orchestrator.name,
+        )
         return HeartbeatOut(
             orchestrator_id=orchestrator.id,
             last_heartbeat_at=orchestrator.last_heartbeat_at,
@@ -161,6 +211,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: TaskCreate,
         session: Session = Depends(get_db_session),
     ) -> CrawlTask:
+        now = utcnow()
         task = CrawlTask(
             city=payload.city.strip(),
             store=payload.store.strip(),
@@ -168,19 +219,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             last_crawl_at=payload.last_crawl_at,
             parser_name=payload.parser_name.strip(),
             is_active=payload.is_active,
-            created_at=utcnow(),
-            updated_at=utcnow(),
+            created_at=now,
+            updated_at=now,
         )
         session.add(task)
         session.commit()
         session.refresh(task)
+        LOGGER.info(
+            "Task created: id=%s city=%s store=%s parser=%s active=%s frequency_hours=%s",
+            task.id,
+            task.city,
+            task.store,
+            task.parser_name,
+            task.is_active,
+            task.frequency_hours,
+        )
         return task
 
     @app.get("/api/tasks", response_model=list[TaskOut])
     def list_tasks(session: Session = Depends(get_db_session)) -> list[CrawlTask]:
-        return session.scalars(
+        tasks = session.scalars(
             select(CrawlTask).where(CrawlTask.deleted_at.is_(None)).order_by(CrawlTask.id.asc())
         ).all()
+        LOGGER.debug("Tasks listed: count=%s", len(tasks))
+        return tasks
 
     @app.patch("/api/tasks/{task_id}", response_model=TaskOut)
     def update_task(
@@ -190,6 +252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> CrawlTask:
         task = session.get(CrawlTask, task_id)
         if task is None or task.deleted_at is not None:
+            LOGGER.warning("Task update failed: task_id=%s reason=not_found", task_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
         changes = payload.model_dump(exclude_unset=True)
@@ -203,6 +266,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         task.updated_at = utcnow()
         session.commit()
         session.refresh(task)
+        LOGGER.info(
+            "Task updated: id=%s active=%s frequency_hours=%s parser=%s leased=%s",
+            task.id,
+            task.is_active,
+            task.frequency_hours,
+            task.parser_name,
+            bool(task.lease_owner_id),
+        )
         return task
 
     @app.delete("/api/tasks/{task_id}")
@@ -212,6 +283,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         task = session.get(CrawlTask, task_id)
         if task is None or task.deleted_at is not None:
+            LOGGER.warning("Task delete failed: task_id=%s reason=not_found", task_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
         now = utcnow()
@@ -221,6 +293,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         task.lease_until = None
         task.updated_at = now
         session.commit()
+        LOGGER.info("Task deleted: id=%s", task_id)
         return {"ok": True, "task_id": task_id}
 
     @app.post("/api/orchestrators/next-task", response_model=NextTaskOut)
@@ -237,9 +310,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if claimed is None:
             session.commit()
+            LOGGER.debug("No due task for orchestrator_id=%s", orchestrator.id)
             return NextTaskOut(assignment=None)
 
         task, run = claimed
+        LOGGER.info(
+            "Task assigned: run_id=%s task_id=%s orchestrator_id=%s",
+            run.id,
+            task.id,
+            orchestrator.id,
+        )
         return NextTaskOut(
             assignment=AssignmentOut(
                 run_id=run.id,
@@ -255,10 +335,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> SubmitResultOut:
         run = session.get(TaskRun, payload.run_id)
         if run is None:
+            LOGGER.warning(
+                "Run result rejected: run_id=%s orchestrator_id=%s reason=run_not_found",
+                payload.run_id,
+                orchestrator.id,
+            )
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
         if run.orchestrator_id != orchestrator.id:
+            LOGGER.warning(
+                "Run result rejected: run_id=%s orchestrator_id=%s reason=ownership_mismatch owner_id=%s",
+                payload.run_id,
+                orchestrator.id,
+                run.orchestrator_id,
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Run belongs to another orchestrator")
         if run.status in TERMINAL_RUN_STATUSES:
+            LOGGER.warning(
+                "Run result rejected: run_id=%s orchestrator_id=%s reason=already_finished status=%s",
+                payload.run_id,
+                orchestrator.id,
+                run.status,
+            )
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Run already finished")
 
         parser_payload = app.state.parser_bridge.normalize_payload(payload.payload)
@@ -300,6 +397,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 LOGGER.exception("Artifact ingest crashed for run %s", finished_run.id)
 
+        LOGGER.info(
+            "Run result accepted: run_id=%s status=%s orchestrator_id=%s processed_images=%s",
+            finished_run.id,
+            finished_run.status,
+            orchestrator.id,
+            processed_images,
+        )
+
         return SubmitResultOut(
             run_id=finished_run.id,
             status=finished_run.status,
@@ -321,9 +426,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> TaskRun:
         run = session.get(TaskRun, run_id)
         if run is None:
+            LOGGER.warning("Run fetch failed: run_id=%s orchestrator_id=%s reason=not_found", run_id, orchestrator.id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
         if run.orchestrator_id != orchestrator.id:
+            LOGGER.warning(
+                "Run fetch forbidden: run_id=%s orchestrator_id=%s owner_id=%s",
+                run_id,
+                orchestrator.id,
+                run.orchestrator_id,
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Run belongs to another orchestrator")
+        LOGGER.debug("Run fetched: run_id=%s orchestrator_id=%s status=%s", run.id, orchestrator.id, run.status)
         return run
 
     return app

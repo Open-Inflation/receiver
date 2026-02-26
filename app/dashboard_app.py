@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 from contextlib import asynccontextmanager
+import logging
+import time
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.engine import make_url
 
 from app.config import Settings, load_settings
 from app.dashboard.routes import create_dashboard_router
@@ -18,8 +21,11 @@ from app.dashboard.utils import (
     task_to_dict,
 )
 from app.database import create_session_factory, create_sqlalchemy_engine
+from app.logging_utils import ensure_logging_configured
 from app.models import Base, CrawlTask
 from app.schema_patch import apply_compat_schema_patches
+
+LOGGER = logging.getLogger(__name__)
 
 
 async def _connect_orchestrator_ws(ws_url: str) -> Any:
@@ -38,7 +44,14 @@ def _get_orchestrator_ws_connector():
 
 
 def create_dashboard_app(settings: Settings | None = None) -> FastAPI:
+    ensure_logging_configured()
     app_settings = settings or load_settings()
+    safe_database_url = make_url(app_settings.database_url).render_as_string(hide_password=True)
+    LOGGER.info(
+        "Initializing dashboard app: db_url=%s ws_url=%s",
+        safe_database_url,
+        app_settings.orchestrator_ws_url,
+    )
 
     _ensure_sqlite_parent_dir(app_settings.database_url)
     engine = create_sqlalchemy_engine(app_settings.database_url)
@@ -51,6 +64,7 @@ def create_dashboard_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            LOGGER.info("Disposing dashboard SQLAlchemy engine")
             engine.dispose()
 
     app = FastAPI(title="Receiver Dashboard", version="0.1.0", lifespan=lifespan)
@@ -59,8 +73,34 @@ def create_dashboard_app(settings: Settings | None = None) -> FastAPI:
 
     app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="dashboard-assets")
 
+    @app.middleware("http")
+    async def log_http_requests(request: Request, call_next):
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            LOGGER.exception(
+                "Dashboard HTTP %s %s failed in %.2fms",
+                request.method,
+                request.url.path,
+                elapsed_ms,
+            )
+            raise
+
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        LOGGER.info(
+            "Dashboard HTTP %s %s -> %s in %.2fms",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+        return response
+
     @app.get("/", include_in_schema=False)
     def dashboard_page() -> FileResponse:
+        LOGGER.debug("Dashboard page requested")
         return dashboard_page_response()
 
     app.include_router(

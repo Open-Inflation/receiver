@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import mimetypes
 import tarfile
 from pathlib import Path
@@ -9,6 +10,8 @@ from typing import Iterable
 from urllib.parse import urljoin
 
 import httpx
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ImagePipeline:
@@ -24,6 +27,12 @@ class ImagePipeline:
         self.storage_api_token = storage_api_token
         self.timeout_seconds = timeout_seconds
         self.max_parallel_uploads = max(1, int(max_parallel_uploads))
+        LOGGER.info(
+            "ImagePipeline initialized: storage_base_url=%s max_parallel_uploads=%s timeout_seconds=%.1f",
+            self.storage_base_url,
+            self.max_parallel_uploads,
+            self.timeout_seconds,
+        )
 
     def process_images(self, images: Iterable[object]) -> list[dict[str, str | None]]:
         try:
@@ -57,13 +66,22 @@ class ImagePipeline:
                     )
             except Exception as exc:
                 result["error"] = str(exc)
+                LOGGER.warning("Direct image upload failed: filename=%s error=%s", filename, result["error"])
 
             return result
 
         tasks = [_process_one(image) for image in images]
         if not tasks:
             return []
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+        success_count = sum(1 for item in results if item.get("uploaded_url"))
+        LOGGER.info(
+            "Direct image upload batch finished: total=%s success=%s failed=%s",
+            len(results),
+            success_count,
+            len(results) - success_count,
+        )
+        return results
 
     def process_archive_images(self, archive_path: str | None) -> list[dict[str, str | None]]:
         try:
@@ -78,6 +96,7 @@ class ImagePipeline:
 
         path = Path(archive_path).expanduser().resolve()
         if not path.is_file():
+            LOGGER.warning("Archive image upload skipped: archive_not_found path=%s", path)
             return [
                 {
                     "filename": None,
@@ -89,6 +108,7 @@ class ImagePipeline:
         try:
             archive_items = await asyncio.to_thread(self._read_archive_items, path)
         except Exception as exc:
+            LOGGER.warning("Archive image upload failed while reading archive: path=%s error=%s", path, exc)
             return [
                 {
                     "filename": None,
@@ -122,12 +142,27 @@ class ImagePipeline:
                     )
             except Exception as exc:
                 result["error"] = str(exc)
+                LOGGER.warning(
+                    "Archive image upload failed: source_path=%s filename=%s error=%s",
+                    source_path,
+                    filename,
+                    result["error"],
+                )
             return result
 
         tasks = [_process_one(item) for item in archive_items]
         if not tasks:
             return []
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+        success_count = sum(1 for item in results if item.get("uploaded_url"))
+        LOGGER.info(
+            "Archive image upload batch finished: archive=%s total=%s success=%s failed=%s",
+            path,
+            len(results),
+            success_count,
+            len(results) - success_count,
+        )
+        return results
 
     def _read_archive_items(self, path: Path) -> list[tuple[str, str, bytes | None, str | None]]:
         items: list[tuple[str, str, bytes | None, str | None]] = []

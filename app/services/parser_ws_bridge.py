@@ -96,6 +96,7 @@ class ParserWsBridge:
             orchestrator = self._resolve_manager_orchestrator(session)
             await self._process_assigned_runs(session, orchestrator)
             await self._claim_and_submit_due_tasks(session, orchestrator)
+            LOGGER.debug("Parser WS cycle completed: orchestrator_id=%s", orchestrator.id)
         finally:
             session.close()
 
@@ -111,6 +112,7 @@ class ParserWsBridge:
         return orchestrator
 
     async def _claim_and_submit_due_tasks(self, session: Session, orchestrator: Orchestrator) -> None:
+        submitted_count = 0
         while True:
             claimed = claim_next_due_task(
                 session,
@@ -122,6 +124,13 @@ class ParserWsBridge:
 
             task, run = claimed
             await self._submit_run(session, run=run, task=task)
+            submitted_count += 1
+        if submitted_count:
+            LOGGER.info(
+                "Submitted claimed tasks: orchestrator_id=%s count=%s",
+                orchestrator.id,
+                submitted_count,
+            )
 
     async def _process_assigned_runs(self, session: Session, orchestrator: Orchestrator) -> None:
         assigned_runs = session.scalars(
@@ -313,15 +322,19 @@ class ParserWsBridge:
         if callable(async_method):
             result = async_method(archive_path)
             if asyncio.iscoroutine(result):
+                LOGGER.debug("Using async archive image pipeline")
                 return await result
             if isinstance(result, list):
+                LOGGER.debug("Async archive image pipeline returned immediate list result")
                 return result
 
         sync_method = getattr(self._image_pipeline, "process_archive_images", None)
         if callable(sync_method):
+            LOGGER.debug("Using sync archive image pipeline fallback")
             result = sync_method(archive_path)
             if isinstance(result, list):
                 return result
+        LOGGER.warning("Image pipeline does not provide archive image processing")
         return []
 
     async def _ws_request(self, payload: dict[str, Any]) -> dict[str, Any]:

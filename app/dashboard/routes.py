@@ -44,6 +44,7 @@ def create_dashboard_router(
             tasks = session.scalars(
                 select(CrawlTask).where(CrawlTask.deleted_at.is_(None)).order_by(CrawlTask.id.asc())
             ).all()
+            LOGGER.debug("Dashboard tasks listed: count=%s", len(tasks))
             return [task_to_dict(task, now=now) for task in tasks]
         finally:
             session.close()
@@ -65,6 +66,14 @@ def create_dashboard_router(
             session.add(task)
             session.commit()
             session.refresh(task)
+            LOGGER.info(
+                "Dashboard task created: id=%s city=%s store=%s parser=%s active=%s",
+                task.id,
+                task.city,
+                task.store,
+                task.parser_name,
+                task.is_active,
+            )
             return task_to_dict(task, now=now)
         finally:
             session.close()
@@ -75,6 +84,7 @@ def create_dashboard_router(
         try:
             task = session.get(CrawlTask, task_id)
             if task is None or task.deleted_at is not None:
+                LOGGER.warning("Dashboard task update failed: task_id=%s reason=not_found", task_id)
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
             changes = payload.model_dump(exclude_unset=True)
@@ -88,6 +98,13 @@ def create_dashboard_router(
             task.updated_at = utcnow()
             session.commit()
             session.refresh(task)
+            LOGGER.info(
+                "Dashboard task updated: id=%s active=%s frequency_hours=%s parser=%s",
+                task.id,
+                task.is_active,
+                task.frequency_hours,
+                task.parser_name,
+            )
             return task_to_dict(task, now=utcnow())
         finally:
             session.close()
@@ -98,6 +115,7 @@ def create_dashboard_router(
         try:
             task = session.get(CrawlTask, task_id)
             if task is None or task.deleted_at is not None:
+                LOGGER.warning("Dashboard task delete failed: task_id=%s reason=not_found", task_id)
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
             now = utcnow()
@@ -107,6 +125,7 @@ def create_dashboard_router(
             task.lease_until = None
             task.updated_at = now
             session.commit()
+            LOGGER.info("Dashboard task deleted: id=%s", task_id)
             return {"ok": True, "task_id": task_id}
         finally:
             session.close()
@@ -137,12 +156,14 @@ def create_dashboard_router(
             run = session.get(TaskRun, run_id)
             if run is None:
                 await _send_error("Run not found.")
+                LOGGER.warning("Run log stream failed: run_id=%s reason=run_not_found", run_id)
                 return
 
             run_dispatch_meta = dispatch_meta(run.dispatch_meta_json)
             remote_job_id = run_dispatch_meta.get("remote_job_id")
             if not isinstance(remote_job_id, str) or not remote_job_id.strip():
                 await _send_error("Run is not linked to orchestrator WS job.")
+                LOGGER.warning("Run log stream failed: run_id=%s reason=missing_remote_job_id", run_id)
                 return
 
             connector = connect_orchestrator_ws_getter()
@@ -155,6 +176,12 @@ def create_dashboard_router(
             if app_settings.orchestrator_ws_password is not None:
                 request_payload["password"] = app_settings.orchestrator_ws_password
             await parser_socket.send(json.dumps(request_payload, ensure_ascii=False))
+            LOGGER.info(
+                "Run log stream started: run_id=%s remote_job_id=%s tail=%s",
+                run_id,
+                remote_job_id.strip(),
+                tail,
+            )
 
             while True:
                 raw_payload = await parser_socket.recv()
@@ -259,7 +286,7 @@ def create_dashboard_router(
                     }
                 )
 
-            return {
+            response_payload = {
                 "generated_at": now.isoformat(),
                 "tasks_total": len(tasks),
                 "tasks_active": sum(1 for task in tasks if task.is_active),
@@ -282,6 +309,8 @@ def create_dashboard_router(
                 ],
                 "recent_runs": recent_runs,
             }
+            LOGGER.debug("Dashboard overview generated: tasks=%s orchestrators=%s", len(tasks), len(orchestrators))
+            return response_payload
         finally:
             session.close()
 
