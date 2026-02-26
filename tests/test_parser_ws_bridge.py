@@ -59,6 +59,12 @@ class FakePersistentSocket:
         self.closed = True
 
 
+class FakeSlowSocket(FakePersistentSocket):
+    async def recv(self) -> str:
+        await asyncio.sleep(0.2)
+        return '{"ok": true, "action": "status"}'
+
+
 class FakeWebsocketsModule:
     def __init__(self, socket: FakePersistentSocket):
         self._socket = socket
@@ -203,3 +209,36 @@ async def _run_ws_persistent_connection_test() -> None:
 
 def test_ws_request_reuses_connection():
     asyncio.run(_run_ws_persistent_connection_test())
+
+
+async def _run_ws_request_timeout_test() -> None:
+    bridge = ParserWsBridge(
+        session_factory=None,  # type: ignore[arg-type]
+        parser_bridge=DummyParserBridge(),
+        image_pipeline=DummyImagePipeline(),
+        artifact_ingestor=DummyArtifactIngestor(),
+        lease_ttl_minutes=30,
+        ws_url="ws://127.0.0.1:8765",
+        ws_password=None,
+        poll_interval_sec=1.0,
+        manager_name="parser-ws-test",
+        submit_include_images=True,
+        submit_full_catalog=True,
+        upload_archive_images=True,
+    )
+
+    fake_socket = FakeSlowSocket()
+    fake_ws_module = FakeWebsocketsModule(fake_socket)
+    bridge._ws_module = fake_ws_module
+    bridge._ws_request_timeout_sec = 0.05
+
+    response = await bridge._ws_request({"action": "status"})
+    assert response.get("ok") is False
+    assert "timed out" in str(response.get("error", "")).lower()
+    assert fake_ws_module.connect_calls >= 1
+
+    await bridge.stop()
+
+
+def test_ws_request_timeout_returns_error():
+    asyncio.run(_run_ws_request_timeout_test())

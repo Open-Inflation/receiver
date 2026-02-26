@@ -69,11 +69,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or load_settings()
     safe_database_url = make_url(app_settings.database_url).render_as_string(hide_password=True)
     LOGGER.info(
-        "Initializing receiver app: db_url=%s ws_url=%s auto_dispatch=%s image_upload_parallelism=%s",
+        "Initializing receiver app: db_url=%s ws_url=%s auto_dispatch=%s image_upload_parallelism=%s ws_request_timeout_sec=%.1f",
         safe_database_url,
         app_settings.orchestrator_ws_url,
         app_settings.orchestrator_auto_dispatch_enabled,
         app_settings.image_upload_parallelism,
+        app_settings.orchestrator_ws_request_timeout_sec,
     )
 
     _ensure_sqlite_parent_dir(app_settings.database_url)
@@ -98,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ws_url=app_settings.orchestrator_ws_url,
         ws_password=app_settings.orchestrator_ws_password,
         poll_interval_sec=app_settings.orchestrator_poll_interval_sec,
+        ws_request_timeout_sec=app_settings.orchestrator_ws_request_timeout_sec,
         manager_name=app_settings.orchestrator_manager_name,
         submit_include_images=app_settings.orchestrator_submit_include_images,
         submit_full_catalog=app_settings.orchestrator_submit_full_catalog,

@@ -38,6 +38,7 @@ class ParserWsBridge:
         submit_include_images: bool,
         submit_full_catalog: bool,
         upload_archive_images: bool,
+        ws_request_timeout_sec: float = 15.0,
     ):
         self._session_factory = session_factory
         self._parser_bridge = parser_bridge
@@ -47,6 +48,7 @@ class ParserWsBridge:
         self._ws_url = ws_url
         self._ws_password = ws_password
         self._poll_interval_sec = max(0.5, float(poll_interval_sec))
+        self._ws_request_timeout_sec = max(1.0, float(ws_request_timeout_sec))
         self._manager_name = manager_name
         self._submit_include_images = submit_include_images
         self._submit_full_catalog = submit_full_catalog
@@ -60,10 +62,11 @@ class ParserWsBridge:
 
     async def run_forever(self) -> None:
         LOGGER.info(
-            "Parser WS bridge started: ws_url=%s manager=%s poll_interval=%.1fs",
+            "Parser WS bridge started: ws_url=%s manager=%s poll_interval=%.1fs request_timeout=%.1fs",
             self._ws_url,
             self._manager_name,
             self._poll_interval_sec,
+            self._ws_request_timeout_sec,
         )
         while not self._stop_event.is_set():
             try:
@@ -381,8 +384,25 @@ class ParserWsBridge:
                     return {"ok": False, "error": str(exc)}
 
                 try:
-                    await socket.send(json.dumps(request_payload, ensure_ascii=False))
-                    raw = await socket.recv()
+                    await asyncio.wait_for(
+                        socket.send(json.dumps(request_payload, ensure_ascii=False)),
+                        timeout=self._ws_request_timeout_sec,
+                    )
+                    raw = await asyncio.wait_for(
+                        socket.recv(),
+                        timeout=self._ws_request_timeout_sec,
+                    )
+                except asyncio.TimeoutError:
+                    await self._close_ws_connection()
+                    if attempt == 0:
+                        continue
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"WS request timed out after {self._ws_request_timeout_sec:.1f}s "
+                            f"(action={request_payload.get('action')})"
+                        ),
+                    }
                 except Exception as exc:
                     await self._close_ws_connection()
                     if attempt == 0:

@@ -19,6 +19,7 @@ class Settings:
     orchestrator_ws_url: str = "ws://127.0.0.1:8765"
     orchestrator_ws_password: str | None = None
     orchestrator_poll_interval_sec: float = 5.0
+    orchestrator_ws_request_timeout_sec: float = 15.0
     orchestrator_manager_name: str = "parser-ws"
     orchestrator_auto_dispatch_enabled: bool = True
     orchestrator_submit_include_images: bool = True
@@ -59,6 +60,12 @@ def load_settings() -> Settings:
     except ValueError:
         poll_interval = 5.0
 
+    ws_request_timeout_raw = os.getenv("ORCHESTRATOR_WS_REQUEST_TIMEOUT_SEC", "15")
+    try:
+        ws_request_timeout_sec = max(1.0, float(ws_request_timeout_raw))
+    except ValueError:
+        ws_request_timeout_sec = 15.0
+
     image_parallel_raw = os.getenv("IMAGE_UPLOAD_PARALLELISM", "4")
     try:
         image_upload_parallelism = max(1, int(image_parallel_raw))
@@ -75,6 +82,7 @@ def load_settings() -> Settings:
         orchestrator_ws_url=orchestrator_ws_url,
         orchestrator_ws_password=orchestrator_ws_password if orchestrator_ws_password else None,
         orchestrator_poll_interval_sec=poll_interval,
+        orchestrator_ws_request_timeout_sec=ws_request_timeout_sec,
         orchestrator_manager_name=orchestrator_manager_name,
         orchestrator_auto_dispatch_enabled=_env_bool("ORCHESTRATOR_AUTO_DISPATCH_ENABLED", True),
         orchestrator_submit_include_images=_env_bool("ORCHESTRATOR_SUBMIT_INCLUDE_IMAGES", True),
