@@ -77,6 +77,9 @@ def claim_next_due_task(
 ) -> tuple[CrawlTask, TaskRun] | None:
     now = utcnow()
     lease_until = now + timedelta(minutes=max(1, lease_ttl_minutes))
+    assigned_task_ids = set(
+        session.scalars(select(TaskRun.task_id).where(TaskRun.status == "assigned")).all()
+    )
 
     candidates = session.scalars(
         select(CrawlTask)
@@ -95,9 +98,13 @@ def claim_next_due_task(
     )
     skipped_leased = 0
     skipped_not_due = 0
+    skipped_already_assigned = 0
     skipped_update_conflict = 0
 
     for candidate in candidates:
+        if candidate.id in assigned_task_ids:
+            skipped_already_assigned += 1
+            continue
         lease_until_candidate = as_utc(candidate.lease_until)
         if lease_until_candidate is not None and lease_until_candidate > now:
             skipped_leased += 1
@@ -154,8 +161,9 @@ def claim_next_due_task(
         return claimed_task, run
 
     LOGGER.debug(
-        "No due task claimed: orchestrator_id=%s skipped_leased=%s skipped_not_due=%s skipped_update_conflict=%s",
+        "No due task claimed: orchestrator_id=%s skipped_already_assigned=%s skipped_leased=%s skipped_not_due=%s skipped_update_conflict=%s",
         orchestrator.id,
+        skipped_already_assigned,
         skipped_leased,
         skipped_not_due,
         skipped_update_conflict,
