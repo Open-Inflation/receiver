@@ -137,7 +137,6 @@ def create_dashboard_router(
         tail: int = Query(default=200, ge=0, le=5000),
     ) -> None:
         await websocket.accept()
-        session = session_factory()
         parser_socket: Any | None = None
 
         async def _send_error(message: str) -> None:
@@ -153,13 +152,19 @@ def create_dashboard_router(
                 )
 
         try:
-            run = session.get(TaskRun, run_id)
-            if run is None:
-                await _send_error("Run not found.")
-                LOGGER.warning("Run log stream failed: run_id=%s reason=run_not_found", run_id)
-                return
+            # Keep DB checkout short: fetch run metadata once and release connection
+            # before opening long-lived websocket stream to orchestrator.
+            session = session_factory()
+            try:
+                run = session.get(TaskRun, run_id)
+                if run is None:
+                    await _send_error("Run not found.")
+                    LOGGER.warning("Run log stream failed: run_id=%s reason=run_not_found", run_id)
+                    return
+                run_dispatch_meta = dispatch_meta(run.dispatch_meta_json)
+            finally:
+                session.close()
 
-            run_dispatch_meta = dispatch_meta(run.dispatch_meta_json)
             remote_job_id = run_dispatch_meta.get("remote_job_id")
             if not isinstance(remote_job_id, str) or not remote_job_id.strip():
                 await _send_error("Run is not linked to orchestrator WS job.")
@@ -210,7 +215,6 @@ def create_dashboard_router(
             LOGGER.exception("Run log proxy failed: run_id=%s error=%s", run_id, exc)
             await _send_error(str(exc))
         finally:
-            session.close()
             if parser_socket is not None:
                 with contextlib.suppress(Exception):
                     await parser_socket.close()
