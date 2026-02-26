@@ -260,7 +260,11 @@ def test_ingest_is_idempotent_for_same_run(client, tmp_path):
     try:
         run = session.get(TaskRun, run_id)
         assert run is not None
-        result = client.app.state.artifact_ingestor.ingest_run_output(session, run=run)
+        result = client.app.state.artifact_ingestor.ingest_run_output(
+            session,
+            run=run,
+            output_json=str(artifact_path),
+        )
         assert result["ok"] is True
 
         artifact_rows = session.scalar(

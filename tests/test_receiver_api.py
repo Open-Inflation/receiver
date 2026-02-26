@@ -195,4 +195,4 @@ def test_upload_images_from_archive(client, tmp_path, monkeypatch):
     run = client.get(f"/api/runs/{run_id}", headers=_auth(token))
     assert run.status_code == 200
     run_body = run.json()
-    assert run_body["image_results_json"][0]["uploaded_url"] == "http://storage.local/images/shelf.jpg"
+    assert run_body["processed_images"] == 1

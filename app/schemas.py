@@ -104,12 +104,6 @@ class TaskRunOut(BaseModel):
     status: str
     assigned_at: datetime
     finished_at: datetime | None
-    payload_json: dict[str, Any] | None
-    parser_payload_json: dict[str, Any] | None
-    image_results_json: list[dict[str, Any]] | None
-    output_json: str | None
-    output_gz: str | None
-    download_url: str | None
-    download_sha256: str | None
-    download_expires_at: datetime | None
+    dispatch_meta_json: dict[str, Any] | None
+    processed_images: int
     error_message: str | None

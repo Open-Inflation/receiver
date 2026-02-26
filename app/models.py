@@ -82,22 +82,11 @@ class TaskRun(Base):
     )
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="assigned")
-    assigned_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=utcnow,
-        index=True,
-    )
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    parser_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    image_results_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
-    output_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    output_gz: Mapped[str | None] = mapped_column(Text, nullable=True)
-    download_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    download_sha256: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    download_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatch_meta_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    processed_images: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     task: Mapped[CrawlTask] = relationship(back_populates="runs")

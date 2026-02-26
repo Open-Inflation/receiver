@@ -25,10 +25,7 @@ def ensure_sqlite_parent_dir(database_url: str) -> None:
 def dispatch_meta(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
-    meta = payload.get("_receiver_dispatch")
-    if not isinstance(meta, dict):
-        return {}
-    return meta
+    return payload
 
 
 def task_to_dict(task: CrawlTask) -> dict[str, object]:

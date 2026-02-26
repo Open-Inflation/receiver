@@ -270,19 +270,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if payload.status == "error" and not error_message:
             error_message = "Orchestrator returned error status"
 
+        processed_images = sum(1 for item in image_results if item.get("uploaded_url"))
         finished_run = finish_run(
             session,
             run=run,
             orchestrator=orchestrator,
             status=payload.status,
-            payload=payload.payload,
-            parser_payload=parser_payload,
-            image_results=image_results,
-            output_json=payload.output_json,
-            output_gz=payload.output_gz,
-            download_url=payload.download_url,
-            download_sha256=payload.download_sha256,
-            download_expires_at=payload.download_expires_at,
+            processed_images=processed_images,
             error_message=error_message,
         )
 
@@ -291,6 +285,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ingest_result = app.state.artifact_ingestor.ingest_run_output(
                     session,
                     run=finished_run,
+                    output_json=payload.output_json,
+                    output_gz=payload.output_gz,
+                    download_url=payload.download_url,
+                    download_sha256=payload.download_sha256,
+                    image_results=image_results,
                 )
                 if not ingest_result.get("ok"):
                     LOGGER.warning(
@@ -301,17 +300,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 LOGGER.exception("Artifact ingest crashed for run %s", finished_run.id)
 
-        processed_images = sum(1 for item in image_results if item.get("uploaded_url"))
         return SubmitResultOut(
             run_id=finished_run.id,
             status=finished_run.status,
             processed_images=processed_images,
             image_results=image_results,
-            output_json=finished_run.output_json,
-            output_gz=finished_run.output_gz,
-            download_url=finished_run.download_url,
-            download_sha256=finished_run.download_sha256,
-            download_expires_at=finished_run.download_expires_at,
+            output_json=payload.output_json,
+            output_gz=payload.output_gz,
+            download_url=payload.download_url,
+            download_sha256=payload.download_sha256,
+            download_expires_at=payload.download_expires_at,
             parser_payload=parser_payload,
         )
 

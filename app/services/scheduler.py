@@ -133,14 +133,7 @@ def finish_run(
     run: TaskRun,
     orchestrator: Orchestrator,
     status: str,
-    payload: dict | None,
-    parser_payload: dict | None,
-    image_results: list[dict],
-    output_json: str | None,
-    output_gz: str | None,
-    download_url: str | None,
-    download_sha256: str | None,
-    download_expires_at: datetime | None,
+    processed_images: int,
     error_message: str | None,
 ) -> TaskRun:
     if run.status in TERMINAL_RUN_STATUSES:
@@ -149,14 +142,7 @@ def finish_run(
     now = utcnow()
     run.status = status
     run.finished_at = now
-    run.payload_json = payload
-    run.parser_payload_json = parser_payload
-    run.image_results_json = image_results
-    run.output_json = output_json
-    run.output_gz = output_gz
-    run.download_url = download_url
-    run.download_sha256 = download_sha256
-    run.download_expires_at = download_expires_at
+    run.processed_images = max(0, int(processed_images))
     run.error_message = error_message
 
     task = session.get(CrawlTask, run.task_id)

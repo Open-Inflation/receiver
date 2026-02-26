@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -138,7 +137,7 @@ class ParserWsBridge:
             if run.status in TERMINAL_RUN_STATUSES:
                 continue
 
-            dispatch_meta = self._dispatch_meta(run.payload_json)
+            dispatch_meta = self._dispatch_meta(run.dispatch_meta_json)
             remote_job_id = dispatch_meta.get("remote_job_id")
             if not isinstance(remote_job_id, str) or not remote_job_id.strip():
                 task = session.get(CrawlTask, run.task_id)
@@ -169,14 +168,7 @@ class ParserWsBridge:
                         run=run,
                         orchestrator=orchestrator,
                         status="error",
-                        payload=status_response,
-                        parser_payload=self._parser_bridge.normalize_payload(status_response),
-                        image_results=[],
-                        output_json=None,
-                        output_gz=None,
-                        download_url=None,
-                        download_sha256=None,
-                        download_expires_at=None,
+                        processed_images=0,
                         error_message=f"Remote job not found: {remote_job_id}",
                     )
                 continue
@@ -209,19 +201,15 @@ class ParserWsBridge:
             if remote_status == "error" and not error_message:
                 error_message = "Orchestrator returned error status"
 
+            processed_images = sum(
+                1 for item in image_results if isinstance(item, dict) and item.get("uploaded_url")
+            )
             finished_run = finish_run(
                 session,
                 run=run,
                 orchestrator=orchestrator,
                 status=remote_status,
-                payload=job_payload,
-                parser_payload=self._parser_bridge.normalize_payload(job_payload),
-                image_results=image_results,
-                output_json=self._safe_str(job_payload.get("output_json")),
-                output_gz=output_gz,
-                download_url=self._safe_str(job_payload.get("download_url")),
-                download_sha256=self._safe_str(job_payload.get("download_sha256")),
-                download_expires_at=self._parse_datetime(job_payload.get("download_expires_at")),
+                processed_images=processed_images,
                 error_message=error_message,
             )
             if remote_status == "success":
@@ -229,6 +217,11 @@ class ParserWsBridge:
                     ingest_result = self._artifact_ingestor.ingest_run_output(
                         session,
                         run=finished_run,
+                        output_json=self._safe_str(job_payload.get("output_json")),
+                        output_gz=output_gz,
+                        download_url=self._safe_str(job_payload.get("download_url")),
+                        download_sha256=self._safe_str(job_payload.get("download_sha256")),
+                        image_results=image_results,
                     )
                     if not ingest_result.get("ok"):
                         LOGGER.warning(
@@ -296,21 +289,14 @@ class ParserWsBridge:
         )
 
     def _set_dispatch_meta(self, session: Session, run: TaskRun, patch: dict[str, Any]) -> None:
-        payload: dict[str, Any] = dict(run.payload_json) if isinstance(run.payload_json, dict) else {}
-        meta: dict[str, Any] = dict(payload.get("_receiver_dispatch", {})) if isinstance(
-            payload.get("_receiver_dispatch"), dict
-        ) else {}
+        meta: dict[str, Any] = dict(run.dispatch_meta_json) if isinstance(run.dispatch_meta_json, dict) else {}
         meta.update(patch)
-        payload["_receiver_dispatch"] = meta
-        run.payload_json = payload
+        run.dispatch_meta_json = meta
         session.commit()
         session.refresh(run)
 
     @staticmethod
-    def _dispatch_meta(payload: Any) -> dict[str, Any]:
-        if not isinstance(payload, dict):
-            return {}
-        value = payload.get("_receiver_dispatch")
+    def _dispatch_meta(value: Any) -> dict[str, Any]:
         if not isinstance(value, dict):
             return {}
         return value
@@ -321,21 +307,6 @@ class ParserWsBridge:
             return None
         token = str(value).strip()
         return token or None
-
-    @staticmethod
-    def _parse_datetime(value: Any) -> datetime | None:
-        if not isinstance(value, str):
-            return None
-        token = value.strip()
-        if not token:
-            return None
-        try:
-            parsed = datetime.fromisoformat(token)
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed
 
     async def _ws_request(self, payload: dict[str, Any]) -> dict[str, Any]:
         request_payload = dict(payload)

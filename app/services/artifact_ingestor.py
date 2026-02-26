@@ -40,8 +40,24 @@ class ArtifactIngestor:
     def dataclass_enabled(self) -> bool:
         return bool(self._from_json and self._retail_unit_model)
 
-    def ingest_run_output(self, session: Session, *, run: TaskRun) -> dict[str, Any]:
-        payload, source, source_error = self._load_payload(run)
+    def ingest_run_output(
+        self,
+        session: Session,
+        *,
+        run: TaskRun,
+        output_json: str | None = None,
+        output_gz: str | None = None,
+        download_url: str | None = None,
+        download_sha256: str | None = None,
+        image_results: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        payload, source, source_error = self._load_payload(
+            run_id=run.id,
+            output_json=output_json,
+            output_gz=output_gz,
+            download_url=download_url,
+            download_sha256=download_sha256,
+        )
         if payload is None:
             return {
                 "ok": False,
@@ -49,7 +65,7 @@ class ArtifactIngestor:
                 "source": None,
             }
 
-        image_url_lookup = self._build_image_url_lookup(run.image_results_json)
+        image_url_lookup = self._build_image_url_lookup(image_results)
         normalized_payload = payload
         dataclass_validated = False
         dataclass_validation_error: str | None = None
@@ -118,30 +134,38 @@ class ArtifactIngestor:
         if not self.dataclass_enabled:
             LOGGER.warning("openinflation_dataclass integration is partially unavailable")
 
-    def _load_payload(self, run: TaskRun) -> tuple[dict[str, Any] | None, str | None, str | None]:
-        if isinstance(run.output_json, str) and run.output_json.strip():
-            payload, error = self._load_from_output_json(run.output_json)
+    def _load_payload(
+        self,
+        *,
+        run_id: str,
+        output_json: str | None,
+        output_gz: str | None,
+        download_url: str | None,
+        download_sha256: str | None,
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        if isinstance(output_json, str) and output_json.strip():
+            payload, error = self._load_from_output_json(output_json)
             if payload is not None:
                 return payload, "output_json", None
             if error:
-                LOGGER.debug("Run %s output_json read failed: %s", run.id, error)
+                LOGGER.debug("Run %s output_json read failed: %s", run_id, error)
 
-        if isinstance(run.output_gz, str) and run.output_gz.strip():
-            payload, error = self._load_from_archive_path(Path(run.output_gz.strip()))
+        if isinstance(output_gz, str) and output_gz.strip():
+            payload, error = self._load_from_archive_path(Path(output_gz.strip()))
             if payload is not None:
                 return payload, "output_gz", None
             if error:
-                LOGGER.debug("Run %s output_gz read failed: %s", run.id, error)
+                LOGGER.debug("Run %s output_gz read failed: %s", run_id, error)
 
-        if isinstance(run.download_url, str) and run.download_url.strip():
+        if isinstance(download_url, str) and download_url.strip():
             payload, error = self._load_from_download_url(
-                run.download_url.strip(),
-                expected_sha256=self._safe_str(run.download_sha256),
+                download_url.strip(),
+                expected_sha256=self._safe_str(download_sha256),
             )
             if payload is not None:
                 return payload, "download_url", None
             if error:
-                LOGGER.debug("Run %s download_url read failed: %s", run.id, error)
+                LOGGER.debug("Run %s download_url read failed: %s", run_id, error)
                 return None, None, error
 
         return None, None, "Unable to read artifact from output_json/output_gz/download_url"

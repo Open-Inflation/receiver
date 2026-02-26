@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 
 from sqlalchemy import select
 
@@ -33,10 +32,10 @@ class DummyImagePipeline:
 
 class DummyArtifactIngestor:
     def __init__(self):
-        self.calls: list[str] = []
+        self.calls: list[tuple[str, dict[str, object]]] = []
 
-    def ingest_run_output(self, session, *, run):
-        self.calls.append(run.id)
+    def ingest_run_output(self, session, *, run, **kwargs):
+        self.calls.append((run.id, kwargs))
         return {"ok": True, "artifact_id": 1}
 
 
@@ -124,7 +123,6 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
                 "output_gz": "/tmp/result.tar.gz",
                 "download_url": "http://127.0.0.1:8766/download?token=x",
                 "download_sha256": "abc",
-                "download_expires_at": datetime.now(timezone.utc).isoformat(),
             },
         },
     ]
@@ -145,9 +143,9 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
         run = check_session.scalar(select(TaskRun).order_by(TaskRun.assigned_at.desc()))
         assert run is not None
         assert run.status == "success"
-        assert run.output_gz == "/tmp/result.tar.gz"
-        assert run.image_results_json is not None
-        assert len(run.image_results_json) == 1
+        assert run.processed_images == 1
+        assert isinstance(run.dispatch_meta_json, dict)
+        assert run.dispatch_meta_json.get("remote_job_id") == "job-123"
 
         task = check_session.get(CrawlTask, run.task_id)
         assert task is not None
@@ -158,6 +156,9 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
 
     assert image_pipeline.archive_calls == ["/tmp/result.tar.gz"]
     assert len(artifact_ingestor.calls) == 1
+    call_run_id, call_kwargs = artifact_ingestor.calls[0]
+    assert isinstance(call_run_id, str)
+    assert call_kwargs.get("output_gz") == "/tmp/result.tar.gz"
     assert ws_requests[1]["action"] == "submit_store"
     assert ws_requests[1]["full_catalog"] is True
     assert ws_requests[1]["include_images"] is True

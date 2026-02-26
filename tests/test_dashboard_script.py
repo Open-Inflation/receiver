@@ -160,7 +160,7 @@ def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
             orchestrator_id=orchestrator.id,
             status="assigned",
             assigned_at=now,
-            payload_json={"_receiver_dispatch": {"remote_job_id": "job-123"}},
+            dispatch_meta_json={"remote_job_id": "job-123"},
         )
         session.add(run)
         session.commit()

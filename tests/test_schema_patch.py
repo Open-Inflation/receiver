@@ -81,15 +81,8 @@ def test_legacy_schema_is_patched_on_startup(tmp_path: Path) -> None:
     inspector = inspect(app.state.engine)
     columns = {column["name"] for column in inspector.get_columns("task_runs")}
     task_columns = {column["name"] for column in inspector.get_columns("crawl_tasks")}
-    task_run_indexes = {index["name"] for index in inspector.get_indexes("task_runs")}
-
-    assert "image_results_json" in columns
-    assert "output_json" in columns
-    assert "output_gz" in columns
-    assert "download_url" in columns
-    assert "download_sha256" in columns
-    assert "download_expires_at" in columns
     assert "deleted_at" in task_columns
-    assert "ix_task_runs_assigned_at" in task_run_indexes
+    assert "dispatch_meta_json" not in columns
+    assert "processed_images" not in columns
 
     app.state.engine.dispose()
