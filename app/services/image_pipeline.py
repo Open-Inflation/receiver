@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import logging
 import mimetypes
 import tarfile
@@ -106,7 +107,7 @@ class ImagePipeline:
             ]
 
         try:
-            archive_items = await asyncio.to_thread(self._read_archive_items, path)
+            results = await asyncio.to_thread(self._process_archive_images_threaded, path)
         except Exception as exc:
             LOGGER.warning("Archive image upload failed while reading archive: path=%s error=%s", path, exc)
             return [
@@ -116,44 +117,16 @@ class ImagePipeline:
                     "error": f"Failed to read archive: {exc}",
                 }
             ]
-
-        semaphore = asyncio.Semaphore(self.max_parallel_uploads)
-
-        async def _process_one(item: tuple[str, str, bytes | None, str | None]) -> dict[str, str | None]:
-            filename, source_path, raw_bytes, read_error = item
-            result: dict[str, str | None] = {
-                "filename": filename,
-                "source_path": source_path,
-                "uploaded_url": None,
-                "error": read_error,
-            }
-            if read_error is not None:
-                return result
-            if raw_bytes is None:
-                result["error"] = "Archive entry has no data stream"
-                return result
-
-            try:
-                async with semaphore:
-                    result["uploaded_url"] = await asyncio.to_thread(
-                        self._upload_to_storage,
-                        filename=filename,
-                        image_bytes=raw_bytes,
-                    )
-            except Exception as exc:
-                result["error"] = str(exc)
+        if not results:
+            return []
+        for item in results:
+            if item.get("error"):
                 LOGGER.warning(
                     "Archive image upload failed: source_path=%s filename=%s error=%s",
-                    source_path,
-                    filename,
-                    result["error"],
+                    item.get("source_path"),
+                    item.get("filename"),
+                    item.get("error"),
                 )
-            return result
-
-        tasks = [_process_one(item) for item in archive_items]
-        if not tasks:
-            return []
-        results = await asyncio.gather(*tasks)
         success_count = sum(1 for item in results if item.get("uploaded_url"))
         LOGGER.info(
             "Archive image upload batch finished: archive=%s total=%s success=%s failed=%s",
@@ -164,28 +137,113 @@ class ImagePipeline:
         )
         return results
 
-    def _read_archive_items(self, path: Path) -> list[tuple[str, str, bytes | None, str | None]]:
-        items: list[tuple[str, str, bytes | None, str | None]] = []
-        with tarfile.open(path, mode="r:gz") as archive:
-            for member in archive.getmembers():
-                if not member.isfile():
-                    continue
-                if not member.name.startswith("images/"):
-                    continue
+    def _process_archive_images_threaded(self, path: Path) -> list[dict[str, str | None]]:
+        indexed_results: dict[int, dict[str, str | None]] = {}
+        in_flight: dict[Future[dict[str, str | None]], int] = {}
+        next_index = 0
+        max_in_flight = max(1, self.max_parallel_uploads * 2)
 
-                filename = Path(member.name).name
-                if not filename:
-                    continue
-
-                try:
-                    extracted = archive.extractfile(member)
-                    if extracted is None:
-                        items.append((filename, member.name, None, "Archive entry has no data stream"))
+        with ThreadPoolExecutor(max_workers=self.max_parallel_uploads) as pool:
+            with tarfile.open(path, mode="r:gz") as archive:
+                for member in archive.getmembers():
+                    if not member.isfile():
                         continue
-                    items.append((filename, member.name, extracted.read(), None))
-                except Exception as exc:
-                    items.append((filename, member.name, None, str(exc)))
-        return items
+                    if not member.name.startswith("images/"):
+                        continue
+
+                    filename = Path(member.name).name
+                    if not filename:
+                        continue
+
+                    index = next_index
+                    next_index += 1
+
+                    try:
+                        extracted = archive.extractfile(member)
+                        if extracted is None:
+                            indexed_results[index] = {
+                                "filename": filename,
+                                "source_path": member.name,
+                                "uploaded_url": None,
+                                "error": "Archive entry has no data stream",
+                            }
+                            continue
+                        raw_bytes = extracted.read()
+                    except Exception as exc:
+                        indexed_results[index] = {
+                            "filename": filename,
+                            "source_path": member.name,
+                            "uploaded_url": None,
+                            "error": str(exc),
+                        }
+                        continue
+
+                    future = pool.submit(
+                        self._upload_archive_item,
+                        filename=filename,
+                        source_path=member.name,
+                        raw_bytes=raw_bytes,
+                    )
+                    in_flight[future] = index
+
+                    if len(in_flight) >= max_in_flight:
+                        done, _ = wait(set(in_flight), return_when=FIRST_COMPLETED)
+                        self._collect_completed_archive_uploads(
+                            completed=done,
+                            in_flight=in_flight,
+                            indexed_results=indexed_results,
+                        )
+
+            if in_flight:
+                done, _ = wait(set(in_flight))
+                self._collect_completed_archive_uploads(
+                    completed=done,
+                    in_flight=in_flight,
+                    indexed_results=indexed_results,
+                )
+
+        return [indexed_results[index] for index in range(next_index)]
+
+    def _collect_completed_archive_uploads(
+        self,
+        *,
+        completed: set[Future[dict[str, str | None]]],
+        in_flight: dict[Future[dict[str, str | None]], int],
+        indexed_results: dict[int, dict[str, str | None]],
+    ) -> None:
+        for future in completed:
+            index = in_flight.pop(future)
+            try:
+                indexed_results[index] = future.result()
+            except Exception as exc:
+                indexed_results[index] = {
+                    "filename": None,
+                    "source_path": None,
+                    "uploaded_url": None,
+                    "error": str(exc),
+                }
+
+    def _upload_archive_item(
+        self,
+        *,
+        filename: str,
+        source_path: str,
+        raw_bytes: bytes,
+    ) -> dict[str, str | None]:
+        result: dict[str, str | None] = {
+            "filename": filename,
+            "source_path": source_path,
+            "uploaded_url": None,
+            "error": None,
+        }
+        try:
+            result["uploaded_url"] = self._upload_to_storage(
+                filename=filename,
+                image_bytes=raw_bytes,
+            )
+        except Exception as exc:
+            result["error"] = str(exc)
+        return result
 
     def _upload_to_storage(self, *, filename: str, image_bytes: bytes) -> str:
         headers = {"Authorization": f"Bearer {self.storage_api_token}"}

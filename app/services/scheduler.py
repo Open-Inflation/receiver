@@ -93,12 +93,17 @@ def claim_next_due_task(
         len(candidates),
         lease_ttl_minutes,
     )
+    skipped_leased = 0
+    skipped_not_due = 0
+    skipped_update_conflict = 0
 
     for candidate in candidates:
         lease_until_candidate = as_utc(candidate.lease_until)
         if lease_until_candidate is not None and lease_until_candidate > now:
+            skipped_leased += 1
             continue
         if not is_task_due(candidate, now=now):
+            skipped_not_due += 1
             continue
 
         updated = session.execute(
@@ -121,6 +126,7 @@ def claim_next_due_task(
         ).rowcount
 
         if updated != 1:
+            skipped_update_conflict += 1
             continue
 
         run = TaskRun(
@@ -147,7 +153,13 @@ def claim_next_due_task(
         )
         return claimed_task, run
 
-    LOGGER.debug("No due task claimed: orchestrator_id=%s", orchestrator.id)
+    LOGGER.debug(
+        "No due task claimed: orchestrator_id=%s skipped_leased=%s skipped_not_due=%s skipped_update_conflict=%s",
+        orchestrator.id,
+        skipped_leased,
+        skipped_not_due,
+        skipped_update_conflict,
+    )
     return None
 
 

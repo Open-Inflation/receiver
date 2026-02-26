@@ -15,6 +15,7 @@ class Settings:
     storage_api_token: str
     parser_src_path: Path
     lease_ttl_minutes: int
+    image_upload_parallelism: int = 4
     orchestrator_ws_url: str = "ws://127.0.0.1:8765"
     orchestrator_ws_password: str | None = None
     orchestrator_poll_interval_sec: float = 5.0
@@ -58,12 +59,19 @@ def load_settings() -> Settings:
     except ValueError:
         poll_interval = 5.0
 
+    image_parallel_raw = os.getenv("IMAGE_UPLOAD_PARALLELISM", "4")
+    try:
+        image_upload_parallelism = max(1, int(image_parallel_raw))
+    except ValueError:
+        image_upload_parallelism = 4
+
     return Settings(
         database_url=database_url,
         storage_base_url=storage_base_url,
         storage_api_token=storage_api_token,
         parser_src_path=parser_src_path,
         lease_ttl_minutes=lease_ttl_minutes,
+        image_upload_parallelism=image_upload_parallelism,
         orchestrator_ws_url=orchestrator_ws_url,
         orchestrator_ws_password=orchestrator_ws_password if orchestrator_ws_password else None,
         orchestrator_poll_interval_sec=poll_interval,

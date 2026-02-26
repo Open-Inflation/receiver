@@ -69,10 +69,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or load_settings()
     safe_database_url = make_url(app_settings.database_url).render_as_string(hide_password=True)
     LOGGER.info(
-        "Initializing receiver app: db_url=%s ws_url=%s auto_dispatch=%s",
+        "Initializing receiver app: db_url=%s ws_url=%s auto_dispatch=%s image_upload_parallelism=%s",
         safe_database_url,
         app_settings.orchestrator_ws_url,
         app_settings.orchestrator_auto_dispatch_enabled,
+        app_settings.image_upload_parallelism,
     )
 
     _ensure_sqlite_parent_dir(app_settings.database_url)
@@ -85,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     image_pipeline = ImagePipeline(
         storage_base_url=app_settings.storage_base_url,
         storage_api_token=app_settings.storage_api_token,
+        max_parallel_uploads=app_settings.image_upload_parallelism,
     )
     artifact_ingestor = ArtifactIngestor(parser_src_path=app_settings.parser_src_path)
     ws_bridge = ParserWsBridge(

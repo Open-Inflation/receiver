@@ -141,6 +141,11 @@ class ParserWsBridge:
             )
             .order_by(TaskRun.assigned_at.asc())
         ).all()
+        LOGGER.debug(
+            "Assigned runs fetched: orchestrator_id=%s count=%s",
+            orchestrator.id,
+            len(assigned_runs),
+        )
 
         for run in assigned_runs:
             if run.status in TERMINAL_RUN_STATUSES:
@@ -149,8 +154,10 @@ class ParserWsBridge:
             dispatch_meta = self._dispatch_meta(run.dispatch_meta_json)
             remote_job_id = dispatch_meta.get("remote_job_id")
             if not isinstance(remote_job_id, str) or not remote_job_id.strip():
+                LOGGER.debug("Run has no remote_job_id, resubmitting: run_id=%s task_id=%s", run.id, run.task_id)
                 task = session.get(CrawlTask, run.task_id)
                 if task is None:
+                    LOGGER.warning("Assigned run task not found: run_id=%s task_id=%s", run.id, run.task_id)
                     continue
                 await self._submit_run(session, run=run, task=task)
                 continue
@@ -163,6 +170,12 @@ class ParserWsBridge:
             )
             if not status_response.get("ok"):
                 error_text = str(status_response.get("error", "status request failed"))
+                LOGGER.warning(
+                    "Status request failed: run_id=%s remote_job_id=%s error=%s",
+                    run.id,
+                    remote_job_id,
+                    error_text,
+                )
                 self._set_dispatch_meta(
                     session,
                     run,
@@ -184,9 +197,21 @@ class ParserWsBridge:
 
             job_payload = status_response.get("job")
             if not isinstance(job_payload, dict):
+                LOGGER.debug(
+                    "Status response without job payload: run_id=%s remote_job_id=%s payload=%s",
+                    run.id,
+                    remote_job_id,
+                    status_response,
+                )
                 continue
 
             remote_status = str(job_payload.get("status", "")).lower().strip()
+            LOGGER.debug(
+                "Remote job status: run_id=%s remote_job_id=%s status=%s",
+                run.id,
+                remote_job_id,
+                remote_status,
+            )
             self._set_dispatch_meta(
                 session,
                 run,
@@ -197,6 +222,12 @@ class ParserWsBridge:
             )
 
             if remote_status not in {"success", "error"}:
+                LOGGER.debug(
+                    "Run still in progress: run_id=%s remote_job_id=%s status=%s",
+                    run.id,
+                    remote_job_id,
+                    remote_status,
+                )
                 continue
 
             image_results: list[dict[str, Any]] = []
