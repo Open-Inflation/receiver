@@ -103,6 +103,10 @@ def claim_next_due_task(
                 lease_until=lease_until,
                 updated_at=now,
             )
+            # SQLite returns naive datetimes for DateTime(timezone=True) columns.
+            # Avoid Python-side criteria evaluation during session sync, which can
+            # raise on naive/aware datetime comparisons.
+            .execution_options(synchronize_session=False)
         ).rowcount
 
         if updated != 1:
