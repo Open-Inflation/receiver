@@ -156,6 +156,32 @@ class ParserWsBridge:
 
             dispatch_meta = self._dispatch_meta(run.dispatch_meta_json)
             remote_job_id = dispatch_meta.get("remote_job_id")
+            persisted_remote_status = str(dispatch_meta.get("remote_status", "")).strip().lower()
+            if persisted_remote_status == "error":
+                try:
+                    finish_run(
+                        session,
+                        run=run,
+                        orchestrator=orchestrator,
+                        status="error",
+                        processed_images=int(run.processed_images or 0),
+                        error_message=(
+                            self._safe_str(dispatch_meta.get("last_status_error"))
+                            or "Remote job marked as error"
+                        ),
+                    )
+                    LOGGER.warning(
+                        "Run reconciled from persisted remote_status=error: run_id=%s remote_job_id=%s",
+                        run.id,
+                        remote_job_id,
+                    )
+                except Exception:
+                    LOGGER.exception(
+                        "Failed to reconcile run from persisted remote_status=error: run_id=%s",
+                        run.id,
+                    )
+                continue
+
             if not isinstance(remote_job_id, str) or not remote_job_id.strip():
                 LOGGER.debug("Run has no remote_job_id, resubmitting: run_id=%s task_id=%s", run.id, run.task_id)
                 task = session.get(CrawlTask, run.task_id)
@@ -233,47 +259,55 @@ class ParserWsBridge:
                 )
                 continue
 
-            image_results: list[dict[str, Any]] = []
-            output_gz = self._safe_str(job_payload.get("output_gz"))
-            if remote_status == "success" and self._upload_archive_images:
-                image_results = await self._process_archive_images(output_gz)
+            try:
+                image_results: list[dict[str, Any]] = []
+                output_gz = self._safe_str(job_payload.get("output_gz"))
+                if remote_status == "success" and self._upload_archive_images:
+                    image_results = await self._process_archive_images(output_gz)
 
-            error_message = self._safe_str(job_payload.get("message"))
-            if remote_status == "error" and not error_message:
-                error_message = self._safe_str(job_payload.get("traceback"))
-            if remote_status == "error" and not error_message:
-                error_message = "Orchestrator returned error status"
+                error_message = self._safe_str(job_payload.get("message"))
+                if remote_status == "error" and not error_message:
+                    error_message = self._safe_str(job_payload.get("traceback"))
+                if remote_status == "error" and not error_message:
+                    error_message = "Orchestrator returned error status"
 
-            processed_images = sum(
-                1 for item in image_results if isinstance(item, dict) and item.get("uploaded_url")
-            )
-            finished_run = finish_run(
-                session,
-                run=run,
-                orchestrator=orchestrator,
-                status=remote_status,
-                processed_images=processed_images,
-                error_message=error_message,
-            )
-            if remote_status == "success":
-                try:
-                    ingest_result = self._artifact_ingestor.ingest_run_output(
-                        session,
-                        run=finished_run,
-                        output_json=self._safe_str(job_payload.get("output_json")),
-                        output_gz=output_gz,
-                        download_url=self._safe_str(job_payload.get("download_url")),
-                        download_sha256=self._safe_str(job_payload.get("download_sha256")),
-                        image_results=image_results,
-                    )
-                    if not ingest_result.get("ok"):
-                        LOGGER.warning(
-                            "Artifact ingest failed for run %s: %s",
-                            finished_run.id,
-                            ingest_result.get("error"),
+                processed_images = sum(
+                    1 for item in image_results if isinstance(item, dict) and item.get("uploaded_url")
+                )
+                finished_run = finish_run(
+                    session,
+                    run=run,
+                    orchestrator=orchestrator,
+                    status=remote_status,
+                    processed_images=processed_images,
+                    error_message=error_message,
+                )
+                if remote_status == "success":
+                    try:
+                        ingest_result = self._artifact_ingestor.ingest_run_output(
+                            session,
+                            run=finished_run,
+                            output_json=self._safe_str(job_payload.get("output_json")),
+                            output_gz=output_gz,
+                            download_url=self._safe_str(job_payload.get("download_url")),
+                            download_sha256=self._safe_str(job_payload.get("download_sha256")),
+                            image_results=image_results,
                         )
-                except Exception:
-                    LOGGER.exception("Artifact ingest crashed for run %s", finished_run.id)
+                        if not ingest_result.get("ok"):
+                            LOGGER.warning(
+                                "Artifact ingest failed for run %s: %s",
+                                finished_run.id,
+                                ingest_result.get("error"),
+                            )
+                    except Exception:
+                        LOGGER.exception("Artifact ingest crashed for run %s", finished_run.id)
+            except Exception:
+                LOGGER.exception(
+                    "Failed to finalize run from terminal remote status: run_id=%s remote_job_id=%s remote_status=%s",
+                    run.id,
+                    remote_job_id,
+                    remote_status,
+                )
 
     async def _submit_run(self, session: Session, *, run: TaskRun, task: CrawlTask) -> None:
         payload: dict[str, Any] = {

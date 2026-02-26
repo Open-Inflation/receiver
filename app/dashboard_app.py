@@ -22,7 +22,7 @@ from app.dashboard.utils import (
 )
 from app.database import create_session_factory, create_sqlalchemy_engine
 from app.logging_utils import ensure_logging_configured
-from app.models import Base, CrawlTask
+from app.models import Base
 from app.schema_patch import apply_compat_schema_patches
 
 LOGGER = logging.getLogger(__name__)
