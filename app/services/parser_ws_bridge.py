@@ -193,7 +193,7 @@ class ParserWsBridge:
             image_results: list[dict[str, Any]] = []
             output_gz = self._safe_str(job_payload.get("output_gz"))
             if remote_status == "success" and self._upload_archive_images:
-                image_results = self._image_pipeline.process_archive_images(output_gz)
+                image_results = await self._process_archive_images(output_gz)
 
             error_message = self._safe_str(job_payload.get("message"))
             if remote_status == "error" and not error_message:
@@ -307,6 +307,22 @@ class ParserWsBridge:
             return None
         token = str(value).strip()
         return token or None
+
+    async def _process_archive_images(self, archive_path: str | None) -> list[dict[str, Any]]:
+        async_method = getattr(self._image_pipeline, "process_archive_images_async", None)
+        if callable(async_method):
+            result = async_method(archive_path)
+            if asyncio.iscoroutine(result):
+                return await result
+            if isinstance(result, list):
+                return result
+
+        sync_method = getattr(self._image_pipeline, "process_archive_images", None)
+        if callable(sync_method):
+            result = sync_method(archive_path)
+            if isinstance(result, list):
+                return result
+        return []
 
     async def _ws_request(self, payload: dict[str, Any]) -> dict[str, Any]:
         request_payload = dict(payload)
