@@ -214,22 +214,35 @@ def create_dashboard_router(
                 session.execute(select(TaskRun.status, func.count(TaskRun.id)).group_by(TaskRun.status)).all()
             )
 
+            recent_runs_limited = (
+                select(
+                    TaskRun.id.label("run_id"),
+                    TaskRun.task_id.label("task_id"),
+                    TaskRun.orchestrator_id.label("orchestrator_id"),
+                    TaskRun.status.label("status"),
+                    TaskRun.assigned_at.label("assigned_at"),
+                    TaskRun.finished_at.label("finished_at"),
+                )
+                .order_by(TaskRun.assigned_at.desc())
+                .limit(12)
+                .subquery()
+            )
             recent_rows = session.execute(
                 select(
-                    TaskRun.id,
-                    TaskRun.task_id,
-                    TaskRun.status,
-                    TaskRun.assigned_at,
-                    TaskRun.finished_at,
+                    recent_runs_limited.c.run_id,
+                    recent_runs_limited.c.task_id,
+                    recent_runs_limited.c.status,
+                    recent_runs_limited.c.assigned_at,
+                    recent_runs_limited.c.finished_at,
                     Orchestrator.name,
                     CrawlTask.city,
                     CrawlTask.store,
                     TaskRun.image_results_json,
                 )
-                .join(Orchestrator, Orchestrator.id == TaskRun.orchestrator_id)
-                .join(CrawlTask, CrawlTask.id == TaskRun.task_id)
-                .order_by(TaskRun.assigned_at.desc())
-                .limit(12)
+                .join(Orchestrator, Orchestrator.id == recent_runs_limited.c.orchestrator_id)
+                .join(CrawlTask, CrawlTask.id == recent_runs_limited.c.task_id)
+                .join(TaskRun, TaskRun.id == recent_runs_limited.c.run_id)
+                .order_by(recent_runs_limited.c.assigned_at.desc())
             ).all()
 
             recent_runs = []

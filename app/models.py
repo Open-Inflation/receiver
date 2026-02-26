@@ -82,7 +82,12 @@ class TaskRun(Base):
     )
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="assigned")
-    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        index=True,
+    )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
