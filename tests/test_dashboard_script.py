@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.dashboard_app import create_dashboard_app
-from app.models import CrawlTask, Orchestrator, TaskRun
+from app.models import CrawlTask, Orchestrator, RunArtifact, TaskRun
 from app.services.scheduler import utcnow
 
 
@@ -182,6 +182,8 @@ def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
         assert recent["remote_status"] is None
         assert recent["remote_terminal"] is False
         assert recent["can_open_live_log"] is True
+        assert recent["display_status"] == "assigned"
+        assert recent["validation_failed"] is False
 
     assert first_payload["event"] == "snapshot"
     assert first_payload["lines"] == ["line-a", "line-b"]
@@ -240,6 +242,69 @@ def test_dashboard_overview_remote_terminal_disables_live_log(tmp_path: Path):
         assert overview.status_code == 200
         recent = overview.json()["recent_runs"][0]
         assert recent["status"] == "assigned"
+        assert recent["display_status"] == "assigned"
         assert recent["remote_status"] == "success"
         assert recent["remote_terminal"] is True
         assert recent["can_open_live_log"] is False
+
+
+def test_dashboard_overview_marks_validation_failed_as_warning(tmp_path: Path):
+    app = create_dashboard_app(_settings(tmp_path))
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        task = CrawlTask(
+            city="Moscow",
+            store="C779",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        orchestrator = Orchestrator(
+            id="k" * 32,
+            name="parser-ws-warning",
+            token="u" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        run = TaskRun(
+            id="w" * 32,
+            task_id=1,
+            orchestrator_id=orchestrator.id,
+            status="success",
+            assigned_at=now,
+            finished_at=now,
+            dispatch_meta_json={"remote_job_id": "job-779", "remote_status": "success"},
+        )
+        session.add(task)
+        session.add(orchestrator)
+        session.flush()
+        run.task_id = task.id
+        session.add(run)
+        session.flush()
+        session.add(
+            RunArtifact(
+                run_id=run.id,
+                source="output_gz",
+                parser_name="chizhik",
+                dataclass_validated=False,
+                dataclass_validation_error="validation failed",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        body = overview.json()
+        recent = body["recent_runs"][0]
+        assert recent["status"] == "success"
+        assert recent["display_status"] == "validation_failed"
+        assert recent["validation_failed"] is True
+        assert recent["dataclass_validated"] is False
+        assert body["runs_warning"] >= 1

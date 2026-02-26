@@ -348,6 +348,10 @@ td select {
 .chip.success { border-color: rgba(61, 223, 154, 0.62); color: var(--ok); }
 .chip.error { border-color: rgba(255, 111, 132, 0.62); color: var(--err); }
 .chip.assigned { border-color: rgba(255, 204, 77, 0.6); color: var(--warn); }
+.chip.warning {
+  border-color: rgba(255, 172, 94, 0.72);
+  color: var(--accent-warm);
+}
 .chip.running,
 .chip.queued,
 .chip.waiting {

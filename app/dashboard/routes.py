@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import CrawlTask, Orchestrator, TaskRun
+from app.models import CrawlTask, Orchestrator, RunArtifact, TaskRun
 from app.services.scheduler import as_utc, is_task_due, utcnow
 
 from .schemas import TaskCreateIn, TaskUpdateIn
@@ -245,6 +245,17 @@ def create_dashboard_router(
             run_counts = dict(
                 session.execute(select(TaskRun.status, func.count(TaskRun.id)).group_by(TaskRun.status)).all()
             )
+            warning_runs = int(
+                session.scalar(
+                    select(func.count(TaskRun.id))
+                    .join(RunArtifact, RunArtifact.run_id == TaskRun.id)
+                    .where(
+                        TaskRun.status == "success",
+                        RunArtifact.dataclass_validated.is_(False),
+                    )
+                )
+                or 0
+            )
 
             recent_rows = session.execute(
                 select(
@@ -258,9 +269,11 @@ def create_dashboard_router(
                     CrawlTask.store,
                     TaskRun.processed_images,
                     TaskRun.dispatch_meta_json,
+                    RunArtifact.dataclass_validated,
                 )
                 .join(Orchestrator, Orchestrator.id == TaskRun.orchestrator_id)
                 .join(CrawlTask, CrawlTask.id == TaskRun.task_id)
+                .outerjoin(RunArtifact, RunArtifact.run_id == TaskRun.id)
                 .order_by(TaskRun.assigned_at.desc())
                 .limit(12)
             ).all()
@@ -277,6 +290,7 @@ def create_dashboard_router(
                 store,
                 processed_images,
                 run_dispatch_meta,
+                dataclass_validated,
             ) in recent_rows:
                 run_meta = dispatch_meta(run_dispatch_meta)
                 remote_status = str(run_meta.get("remote_status", "")).strip().lower() or None
@@ -284,11 +298,14 @@ def create_dashboard_router(
                 remote_job_id = run_meta.get("remote_job_id")
                 has_remote_job_id = isinstance(remote_job_id, str) and bool(remote_job_id.strip())
                 local_terminal = str(run_status).strip().lower() in {"success", "error"}
+                validation_failed = bool(run_status == "success" and dataclass_validated is False)
+                display_status = "validation_failed" if validation_failed else str(run_status)
                 recent_runs.append(
                     {
                         "id": run_id,
                         "task_id": task_id,
                         "status": run_status,
+                        "display_status": display_status,
                         "assigned_at": as_utc(assigned_at).isoformat(),
                         "finished_at": as_utc(finished_at).isoformat() if finished_at else None,
                         "orchestrator_name": orchestrator_name,
@@ -297,6 +314,8 @@ def create_dashboard_router(
                         "processed_images": int(processed_images or 0),
                         "remote_status": remote_status,
                         "remote_terminal": bool(remote_terminal),
+                        "validation_failed": validation_failed,
+                        "dataclass_validated": dataclass_validated,
                         "can_open_live_log": bool(not local_terminal and not remote_terminal and has_remote_job_id),
                     }
                 )
@@ -312,6 +331,7 @@ def create_dashboard_router(
                 "runs_assigned": int(run_counts.get("assigned", 0)),
                 "runs_success": int(run_counts.get("success", 0)),
                 "runs_error": int(run_counts.get("error", 0)),
+                "runs_warning": warning_runs,
                 "orchestrators": [
                     {
                         "id": item.id,

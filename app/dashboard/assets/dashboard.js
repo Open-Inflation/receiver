@@ -209,6 +209,7 @@
         ['Оркестраторы', o.orchestrators_total],
         ['Runs всего', o.runs_total],
         ['Runs success', o.runs_success],
+        ['Runs warning', o.runs_warning ?? 0],
         ['Runs error', o.runs_error],
         ['Runs assigned', o.runs_assigned],
       ];
@@ -271,6 +272,8 @@
         return;
       }
       runListEl.innerHTML = runs.map((run) => {
+        const localStatus = (run.display_status || run.status || 'unknown').toString();
+        const localChipClass = localStatus === 'validation_failed' ? 'warning' : localStatus;
         const isDone = run.status === 'success' || run.status === 'error';
         const canOpenLiveLog = !!run.can_open_live_log;
         const remoteStatus = typeof run.remote_status === 'string' && run.remote_status
@@ -286,18 +289,22 @@
             : (run.remote_terminal
               ? `лог недоступен: remote ${remoteStatus}`
               : 'лог недоступен: нет remote job'));
+        const validationText = run.validation_failed
+          ? '<div class="muted">данные сохранены, dataclass validation failed</div>'
+          : '';
         return `
         <article class="run ${canOpenLiveLog ? '' : 'done'}"${attrs}>
           <div class="row-top">
             <strong class="mono">${run.id.slice(0, 12)}</strong>
             <div class="chip-set">
-              <span class="chip ${run.status}">run:${run.status}</span>
+              <span class="chip ${localChipClass}">run:${localStatus}</span>
               <span class="chip remote-chip ${remoteStatus}">remote:${remoteStatus}</span>
             </div>
           </div>
           <div class="muted">task #${run.task_id} • ${run.city || '—'} / ${run.store || '—'}</div>
           <div class="muted">orch: ${run.orchestrator_name || '—'}</div>
           <div class="muted">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
+          ${validationText}
           <div class="muted">${liveLogText}</div>
         </article>
       `;
