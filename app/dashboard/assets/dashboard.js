@@ -18,6 +18,18 @@
     const runLogStatusEl = document.getElementById('run-log-status');
     const runLogOutputEl = document.getElementById('run-log-output');
     const runLogTailEl = document.getElementById('run-log-tail');
+    const timezoneLabelEl = document.getElementById('timezone-label');
+    const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const localDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZone: browserTimeZone,
+    });
 
     function flash(message, isError = false) {
       flashEl.textContent = message;
@@ -55,7 +67,7 @@
       if (!value) return '—';
       const dt = parseBackendDate(value);
       if (!dt) return String(value);
-      return dt.toLocaleString();
+      return localDateTimeFormatter.format(dt);
     }
 
     function wsUrl(path) {
@@ -185,6 +197,9 @@
       const o = state.overview;
       if (!o) return;
       generatedAtEl.textContent = fmtDate(o.generated_at);
+      if (timezoneLabelEl) {
+        timezoneLabelEl.textContent = browserTimeZone;
+      }
 
       const entries = [
         ['Задачи всего', o.tasks_total],
