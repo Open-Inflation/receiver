@@ -97,7 +97,7 @@ body {
 .grid-metrics {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .metric {
@@ -480,7 +480,7 @@ td select {
 }
 
 @media (max-width: 1080px) {
-  .grid-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .panel-grid { grid-template-columns: 1fr; }
   table { min-width: 700px; }
 }
@@ -488,7 +488,7 @@ td select {
 @media (max-width: 640px) {
   .hero h1 { font-size: 1.5rem; }
   .hero p { font-size: 0.92rem; }
-  .grid-metrics { grid-template-columns: 1fr; }
+  .grid-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .task-create { grid-template-columns: 1fr; }
   .layout { padding: 20px 12px 40px; }
   .panel h2 { font-size: 0.98rem; }
