@@ -19,7 +19,7 @@ class Settings:
     image_archive_max_file_bytes: int = 12 * 1024 * 1024
     image_archive_max_files: int = 2000
     artifact_download_max_bytes: int = 256 * 1024 * 1024
-    artifact_json_member_max_bytes: int = 16 * 1024 * 1024
+    artifact_json_member_max_bytes: int = 100 * 1024 * 1024
     orchestrator_ws_url: str = "ws://127.0.0.1:8765"
     orchestrator_ws_password: str | None = None
     orchestrator_poll_interval_sec: float = 5.0
@@ -96,11 +96,11 @@ def load_settings() -> Settings:
     except ValueError:
         artifact_download_max_bytes = 256 * 1024 * 1024
 
-    artifact_json_member_max_raw = os.getenv("ARTIFACT_JSON_MEMBER_MAX_BYTES", str(16 * 1024 * 1024))
+    artifact_json_member_max_raw = os.getenv("ARTIFACT_JSON_MEMBER_MAX_BYTES", str(100 * 1024 * 1024))
     try:
         artifact_json_member_max_bytes = max(1, int(artifact_json_member_max_raw))
     except ValueError:
-        artifact_json_member_max_bytes = 16 * 1024 * 1024
+        artifact_json_member_max_bytes = 100 * 1024 * 1024
 
     max_claims_raw = os.getenv("ORCHESTRATOR_MAX_CLAIMS_PER_CYCLE", "5")
     try:
