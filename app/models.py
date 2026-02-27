@@ -43,6 +43,7 @@ class CrawlTask(Base):
     last_crawl_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     parser_name: Mapped[str] = mapped_column(String(64), nullable=False, default="fixprice")
+    include_images: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 

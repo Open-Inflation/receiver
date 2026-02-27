@@ -232,6 +232,12 @@
             <td><input data-field="city" value="${task.city}" /></td>
             <td><input data-field="store" value="${task.store}" /></td>
             <td><input data-field="parser_name" value="${task.parser_name}" /></td>
+            <td>
+              <select data-field="include_images">
+                <option value="true" ${(task.include_images ?? true) ? 'selected' : ''}>true</option>
+                <option value="false" ${!(task.include_images ?? true) ? 'selected' : ''}>false</option>
+              </select>
+            </td>
             <td><input data-field="frequency_hours" type="number" min="1" value="${task.frequency_hours}" /></td>
             <td>${fmtDate(task.last_crawl_at)}</td>
             <td>
@@ -333,6 +339,7 @@
         store: form.store.value.trim(),
         frequency_hours: Number(form.frequency_hours.value),
         parser_name: form.parser_name.value.trim() || 'fixprice',
+        include_images: form.include_images.value === 'true',
         is_active: form.is_active.value === 'true',
       };
       if (!payload.city || !payload.store || !payload.frequency_hours) {
@@ -345,6 +352,7 @@
         form.reset();
         form.frequency_hours.value = 24;
         form.parser_name.value = 'fixprice';
+        form.include_images.value = 'true';
         form.is_active.value = 'true';
         flash('Задача создана');
         await refreshAll();
@@ -367,6 +375,7 @@
           city: getValue('city').value.trim(),
           store: getValue('store').value.trim(),
           parser_name: getValue('parser_name').value.trim() || 'fixprice',
+          include_images: getValue('include_images').value === 'true',
           frequency_hours: Number(getValue('frequency_hours').value),
           is_active: getValue('is_active').value === 'true',
         };

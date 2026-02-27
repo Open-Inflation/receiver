@@ -8,7 +8,7 @@
 
 Конвертация изображений выполняется на стороне `storage`.
 `receiver` автоматически отправляет задачи в оркестратор `parser` по WebSocket (`submit_store/status`), если включен bridge.
-При старте применяется только легаси-патч для `crawl_tasks.deleted_at`.
+При старте применяется легаси-патч для `crawl_tasks.deleted_at/include_images`.
 Изменения схемы `task_runs` выполняются вручную.
 
 Используется SQLAlchemy ORM и MySQL. Для локальных тестов поддерживается SQLite.
@@ -20,6 +20,7 @@
 - `store`
 - `last_crawl_at`
 - `frequency_hours`
+- `include_images` - запрашивать изображения карточек в `submit_store`
 
 Дополнительно есть служебные поля lease/статуса для безопасной выдачи задач нескольким оркестраторам.
 
@@ -60,7 +61,7 @@ mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_task_runs
 - `ORCHESTRATOR_WS_PASSWORD` - пароль, если parser запущен с `--auth-password`
 - `ORCHESTRATOR_POLL_INTERVAL_SEC` - интервал poll статуса задач (по умолчанию `5`)
 - `ORCHESTRATOR_MANAGER_NAME` - имя внутреннего оркестратора в БД receiver (по умолчанию `parser-ws`)
-- `ORCHESTRATOR_SUBMIT_INCLUDE_IMAGES` - отправлять `include_images=true` в `submit_store` (`true` по умолчанию)
+- `ORCHESTRATOR_SUBMIT_INCLUDE_IMAGES` - дефолт `include_images` для новых задач (если в API/dashboard явно не задано)
 - `ORCHESTRATOR_UPLOAD_ARCHIVE_IMAGES` - после `success` загружать изображения из `output_gz` в storage (`true` по умолчанию)
 - `ARTIFACT_DOWNLOAD_MAX_BYTES` - лимит размера скачиваемого артефакта по `download_url` (по умолчанию `268435456`)
 - `ARTIFACT_JSON_MEMBER_MAX_BYTES` - лимит размера JSON файла внутри артефакта/`output_json` (по умолчанию `16777216`)
@@ -86,7 +87,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8090
 
 Есть отдельный исполняемый Python-скрипт `dashboard.py`.
 Это отдельное web-приложение для:
-- управления задачами (`create/update active/frequency/parser`);
+- управления задачами (`create/update active/frequency/parser/include_images`);
 - просмотра общей статистики (`tasks/runs/orchestrators`);
 - просмотра последних запусков.
 

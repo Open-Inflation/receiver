@@ -88,6 +88,7 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
             store="C001",
             frequency_hours=24,
             parser_name="fixprice",
+            include_images=False,
             is_active=True,
             created_at=utcnow(),
             updated_at=utcnow(),
@@ -168,7 +169,7 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
     assert call_kwargs.get("output_gz") == "/tmp/result.tar.gz"
     assert ws_requests[1]["action"] == "submit_store"
     assert ws_requests[1]["full_catalog"] is True
-    assert ws_requests[1]["include_images"] is True
+    assert ws_requests[1]["include_images"] is False
 
 
 def test_parser_ws_bridge_cycle(tmp_path):

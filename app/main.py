@@ -226,12 +226,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session: Session = Depends(get_db_session),
     ) -> CrawlTask:
         now = utcnow()
+        include_images = (
+            app.state.settings.orchestrator_submit_include_images
+            if payload.include_images is None
+            else payload.include_images
+        )
         task = CrawlTask(
             city=payload.city.strip(),
             store=payload.store.strip(),
             frequency_hours=payload.frequency_hours,
             last_crawl_at=payload.last_crawl_at,
             parser_name=payload.parser_name.strip(),
+            include_images=include_images,
             is_active=payload.is_active,
             created_at=now,
             updated_at=now,
@@ -240,11 +246,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.commit()
         session.refresh(task)
         LOGGER.info(
-            "Task created: id=%s city=%s store=%s parser=%s active=%s frequency_hours=%s",
+            "Task created: id=%s city=%s store=%s parser=%s include_images=%s active=%s frequency_hours=%s",
             task.id,
             task.city,
             task.store,
             task.parser_name,
+            task.include_images,
             task.is_active,
             task.frequency_hours,
         )
@@ -281,9 +288,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.commit()
         session.refresh(task)
         LOGGER.info(
-            "Task updated: id=%s active=%s frequency_hours=%s parser=%s leased=%s",
+            "Task updated: id=%s active=%s include_images=%s frequency_hours=%s parser=%s leased=%s",
             task.id,
             task.is_active,
+            task.include_images,
             task.frequency_hours,
             task.parser_name,
             bool(task.lease_owner_id),

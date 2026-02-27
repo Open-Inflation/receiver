@@ -37,6 +37,7 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
                 "store": "C500",
                 "frequency_hours": 24,
                 "parser_name": "fixprice",
+                "include_images": False,
                 "is_active": True,
             },
         )
@@ -47,17 +48,20 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
             f"/api/tasks/{task_id}",
             json={
                 "frequency_hours": 12,
+                "include_images": True,
                 "is_active": False,
             },
         )
         assert update.status_code == 200
         assert update.json()["frequency_hours"] == 12
+        assert update.json()["include_images"] is True
         assert update.json()["is_active"] is False
 
         tasks = client.get("/api/tasks")
         assert tasks.status_code == 200
         assert len(tasks.json()) == 1
         listed_task = tasks.json()[0]
+        assert listed_task["include_images"] is True
         assert listed_task["is_due"] is False
         assert str(listed_task["created_at"]).endswith("+00:00")
         assert str(listed_task["updated_at"]).endswith("+00:00")

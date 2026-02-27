@@ -82,6 +82,7 @@ def test_legacy_schema_is_patched_on_startup(tmp_path: Path) -> None:
     columns = {column["name"] for column in inspector.get_columns("task_runs")}
     task_columns = {column["name"] for column in inspector.get_columns("crawl_tasks")}
     assert "deleted_at" in task_columns
+    assert "include_images" in task_columns
     assert "dispatch_meta_json" not in columns
     assert "processed_images" not in columns
 

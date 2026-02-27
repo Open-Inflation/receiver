@@ -28,6 +28,9 @@
         <label>Магазин<input required name="store" placeholder="C001" /></label>
         <label>Частота (ч)<input required min="1" type="number" name="frequency_hours" value="24" /></label>
         <label>Парсер<input name="parser_name" value="fixprice" /></label>
+        <label>Картинки карточек
+          <select name="include_images"><option value="true" selected>Да</option><option value="false">Нет</option></select>
+        </label>
         <label>Активна
           <select name="is_active"><option value="true" selected>Да</option><option value="false">Нет</option></select>
         </label>
@@ -46,6 +49,7 @@
                 <th>Город</th>
                 <th>Магазин</th>
                 <th>Парсер</th>
+                <th>Картинки</th>
                 <th>Частота</th>
                 <th>Последний обход</th>
                 <th>Статус</th>

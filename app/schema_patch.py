@@ -13,6 +13,7 @@ LOGGER = logging.getLogger(__name__)
 
 CRAWL_TASKS_COMPAT_COLUMNS: dict[str, str] = {
     "deleted_at": "DATETIME",
+    "include_images": "BOOLEAN NOT NULL DEFAULT 1",
 }
 
 

@@ -54,7 +54,7 @@ class ParserWsBridge:
         self._max_claims_per_cycle = max(1, int(max_claims_per_cycle))
         self._assigned_parallelism = max(1, int(assigned_parallelism))
         self._manager_name = manager_name
-        self._submit_include_images = submit_include_images
+        self._default_submit_include_images = submit_include_images
         self._submit_full_catalog = submit_full_catalog
         self._upload_archive_images = upload_archive_images
 
@@ -429,7 +429,7 @@ class ParserWsBridge:
             "action": "submit_store",
             "store_code": task.store,
             "parser": task.parser_name,
-            "include_images": self._submit_include_images,
+            "include_images": self._resolve_task_include_images(task),
             "full_catalog": self._submit_full_catalog,
         }
         city_token = task.city.strip()
@@ -455,10 +455,11 @@ class ParserWsBridge:
                 },
             )
             LOGGER.info(
-                "Submitted task %s store=%s parser=%s remote_job_id=%s",
+                "Submitted task %s store=%s parser=%s include_images=%s remote_job_id=%s",
                 run.task_id,
                 task.store,
                 task.parser_name,
+                payload["include_images"],
                 response.get("job_id"),
             )
             return
@@ -538,6 +539,14 @@ class ParserWsBridge:
         if not isinstance(value, dict):
             return {}
         return value
+
+    def _resolve_task_include_images(self, task: CrawlTask) -> bool:
+        include_images = getattr(task, "include_images", None)
+        if isinstance(include_images, bool):
+            return include_images
+        if include_images is not None:
+            return bool(include_images)
+        return bool(self._default_submit_include_images)
 
     @staticmethod
     def _safe_str(value: Any) -> str | None:

@@ -12,6 +12,7 @@ class TaskCreate(BaseModel):
     frequency_hours: int = Field(ge=1, le=24 * 365)
     last_crawl_at: datetime | None = None
     parser_name: str = Field(default="fixprice", min_length=1, max_length=64)
+    include_images: bool | None = None
     is_active: bool = True
 
 
@@ -21,6 +22,7 @@ class TaskUpdate(BaseModel):
     frequency_hours: int | None = Field(default=None, ge=1, le=24 * 365)
     last_crawl_at: datetime | None = None
     parser_name: str | None = Field(default=None, min_length=1, max_length=64)
+    include_images: bool | None = None
     is_active: bool | None = None
 
 
@@ -33,6 +35,7 @@ class TaskOut(BaseModel):
     frequency_hours: int
     last_crawl_at: datetime | None
     parser_name: str
+    include_images: bool
     is_active: bool
     lease_owner_id: str | None
     lease_until: datetime | None
