@@ -29,6 +29,7 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
         page = client.get("/")
         assert page.status_code == 200
         assert "Receiver Control Room" in page.text
+        assert "Картинки" in page.text
         validation_page = client.get("/validation-errors")
         assert validation_page.status_code == 200
         assert "Validation Fix Queue" in validation_page.text

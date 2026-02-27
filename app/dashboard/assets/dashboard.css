@@ -244,7 +244,7 @@ button.danger {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
+  min-width: 880px;
   table-layout: fixed;
 }
 
@@ -267,13 +267,14 @@ th {
 }
 
 th:nth-child(1), td:nth-child(1) { width: 58px; }
-th:nth-child(2), td:nth-child(2) { width: 100px; }
+th:nth-child(2), td:nth-child(2) { width: 96px; }
 th:nth-child(3), td:nth-child(3) { width: 92px; }
-th:nth-child(4), td:nth-child(4) { width: 98px; }
-th:nth-child(5), td:nth-child(5) { width: 86px; }
-th:nth-child(6), td:nth-child(6) { width: 132px; }
-th:nth-child(7), td:nth-child(7) { width: 150px; }
-th:nth-child(8), td:nth-child(8) { width: 92px; }
+th:nth-child(4), td:nth-child(4) { width: 96px; }
+th:nth-child(5), td:nth-child(5) { width: 92px; }
+th:nth-child(6), td:nth-child(6) { width: 84px; }
+th:nth-child(7), td:nth-child(7) { width: 132px; }
+th:nth-child(8), td:nth-child(8) { width: 146px; }
+th:nth-child(9), td:nth-child(9) { width: 110px; }
 
 td input,
 td select {
@@ -522,7 +523,7 @@ td select {
 @media (max-width: 1080px) {
   .grid-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .panel-grid { grid-template-columns: 1fr; }
-  table { min-width: 700px; }
+  table { min-width: 820px; }
 }
 
 @media (max-width: 640px) {
@@ -549,5 +550,5 @@ td select {
   }
   .log-tail { width: 100%; max-width: none; }
   .log-output { font-size: 0.76rem; line-height: 1.35; }
-  table { min-width: 560px; }
+  table { min-width: 640px; }
 }
