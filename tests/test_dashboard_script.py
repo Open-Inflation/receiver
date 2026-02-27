@@ -366,6 +366,62 @@ def test_dashboard_overview_remote_terminal_disables_live_log(tmp_path: Path):
         assert recent["can_open_live_log"] is False
 
 
+def test_dashboard_overview_exposes_finalize_error_message(tmp_path: Path):
+    app = create_dashboard_app(_settings(tmp_path))
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        task = CrawlTask(
+            city="Moscow",
+            store="C779",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        orchestrator = Orchestrator(
+            id="e" * 32,
+            name="parser-ws-error",
+            token="v" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        run = TaskRun(
+            id="x" * 32,
+            task_id=1,
+            orchestrator_id=orchestrator.id,
+            status="error",
+            assigned_at=now,
+            finished_at=now,
+            error_message=(
+                "Finalize failed: JSON member meta.json is too large "
+                "(53746962 bytes), limit is 16777216"
+            ),
+            dispatch_meta_json={"remote_job_id": "job-780", "remote_status": "success"},
+        )
+        session.add(task)
+        session.add(orchestrator)
+        session.flush()
+        run.task_id = task.id
+        session.add(run)
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        recent = overview.json()["recent_runs"][0]
+        assert recent["status"] == "error"
+        assert recent["display_status"] == "error"
+        assert recent["remote_status"] == "success"
+        assert recent["error_message"] is not None
+        assert "Finalize failed:" in recent["error_message"]
+        assert "meta.json is too large" in recent["error_message"]
+
+
 def test_dashboard_overview_marks_validation_failed_as_warning(tmp_path: Path):
     app = create_dashboard_app(_settings(tmp_path))
     session = app.state.session_factory()

@@ -411,6 +411,18 @@ td select {
 .muted { color: var(--muted); }
 .mono { font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace; }
 
+.run-error {
+  margin-top: 8px;
+  border: 1px solid rgba(255, 111, 132, 0.36);
+  border-radius: 8px;
+  padding: 8px;
+  color: #ffd7df;
+  background: rgba(56, 13, 25, 0.44);
+  font: 500 0.76rem/1.35 ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .flash {
   min-height: 1.2rem;
   font-size: 0.9rem;

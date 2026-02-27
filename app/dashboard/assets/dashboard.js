@@ -70,6 +70,15 @@
       return localDateTimeFormatter.format(dt);
     }
 
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function wsUrl(path) {
       const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       return `${scheme}//${window.location.host}${path}`;
@@ -298,6 +307,12 @@
         const validationText = run.validation_failed
           ? '<div class="muted">данные сохранены, dataclass validation failed</div>'
           : '';
+        const errorMessage = run.status === 'error' && typeof run.error_message === 'string'
+          ? run.error_message.trim()
+          : '';
+        const errorText = errorMessage
+          ? `<div class="run-error">${escapeHtml(errorMessage)}</div>`
+          : '';
         return `
         <article class="run ${canOpenLiveLog ? '' : 'done'}"${attrs}>
           <div class="row-top">
@@ -311,6 +326,7 @@
           <div class="muted">orch: ${run.orchestrator_name || '—'}</div>
           <div class="muted">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
           ${validationText}
+          ${errorText}
           <div class="muted">${liveLogText}</div>
         </article>
       `;
