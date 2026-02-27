@@ -89,7 +89,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8090
 Это отдельное web-приложение для:
 - управления задачами (`create/update active/frequency/parser/include_images`);
 - просмотра общей статистики (`tasks/runs/orchestrators`);
-- просмотра последних запусков.
+- просмотра последних запусков;
+- отдельной страницы ошибок валидации, подлежащих устранению (`/validation-errors`).
 
 Важно: дашборд не управляет `last_crawl_at`; это поле обновляет основной скрипт при сохранении результатов обхода.
 
@@ -118,6 +119,7 @@ python dashboard.py --host 127.0.0.1 --port 8091
 - `POST /api/tasks` - создать задачу
 - `GET /api/tasks` - список задач
 - `PATCH /api/tasks/{task_id}` - обновить задачу
+- `GET /api/validation-errors` - список актуальных ошибок dataclass validation (dashboard; по последнему успешному run каждой задачи)
 - `GET /api/runs/{run_id}` - получить run
 - `GET /healthz` - healthcheck
 

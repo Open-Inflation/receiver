@@ -14,7 +14,7 @@ from sqlalchemy.engine import make_url
 
 from app.config import Settings, load_settings
 from app.dashboard.routes import create_dashboard_router
-from app.dashboard.ui import ASSETS_DIR, dashboard_page_response
+from app.dashboard.ui import ASSETS_DIR, dashboard_page_response, validation_errors_page_response
 from app.dashboard.utils import (
     dispatch_meta,
     ensure_sqlite_parent_dir,
@@ -102,6 +102,11 @@ def create_dashboard_app(settings: Settings | None = None) -> FastAPI:
     def dashboard_page() -> FileResponse:
         LOGGER.debug("Dashboard page requested")
         return dashboard_page_response()
+
+    @app.get("/validation-errors", include_in_schema=False)
+    def validation_errors_page() -> FileResponse:
+        LOGGER.debug("Dashboard validation errors page requested")
+        return validation_errors_page_response()
 
     app.include_router(
         create_dashboard_router(

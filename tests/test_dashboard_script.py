@@ -29,6 +29,9 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
         page = client.get("/")
         assert page.status_code == 200
         assert "Receiver Control Room" in page.text
+        validation_page = client.get("/validation-errors")
+        assert validation_page.status_code == 200
+        assert "Validation Fix Queue" in validation_page.text
 
         create = client.post(
             "/api/tasks",
@@ -88,6 +91,116 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
         tasks_after_delete = client.get("/api/tasks")
         assert tasks_after_delete.status_code == 200
         assert tasks_after_delete.json() == []
+
+
+def test_dashboard_validation_errors_lists_only_unresolved_latest_success(tmp_path: Path):
+    app = create_dashboard_app(_settings(tmp_path))
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        orchestrator = Orchestrator(
+            id="o" * 32,
+            name="parser-ws-validation",
+            token="t" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        task_resolved = CrawlTask(
+            city="Moscow",
+            store="C901",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        task_unresolved = CrawlTask(
+            city="SPB",
+            store="C902",
+            frequency_hours=24,
+            parser_name="chizhik",
+            is_active=False,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add_all([orchestrator, task_resolved, task_unresolved])
+        session.commit()
+        session.refresh(task_resolved)
+        session.refresh(task_unresolved)
+
+        resolved_old_run = TaskRun(
+            id="a" * 32,
+            task_id=task_resolved.id,
+            orchestrator_id=orchestrator.id,
+            status="success",
+            assigned_at=now.replace(minute=0, second=0, microsecond=0),
+            finished_at=now.replace(minute=1, second=0, microsecond=0),
+            dispatch_meta_json={"remote_status": "success"},
+        )
+        resolved_new_run = TaskRun(
+            id="b" * 32,
+            task_id=task_resolved.id,
+            orchestrator_id=orchestrator.id,
+            status="success",
+            assigned_at=now.replace(minute=2, second=0, microsecond=0),
+            finished_at=now.replace(minute=3, second=0, microsecond=0),
+            dispatch_meta_json={"remote_status": "success"},
+        )
+        unresolved_run = TaskRun(
+            id="c" * 32,
+            task_id=task_unresolved.id,
+            orchestrator_id=orchestrator.id,
+            status="success",
+            assigned_at=now.replace(minute=4, second=0, microsecond=0),
+            finished_at=now.replace(minute=5, second=0, microsecond=0),
+            dispatch_meta_json={"remote_status": "success"},
+        )
+        session.add_all([resolved_old_run, resolved_new_run, unresolved_run])
+        session.commit()
+
+        session.add_all(
+            [
+                RunArtifact(
+                    run_id=resolved_old_run.id,
+                    source="output_gz",
+                    parser_name="fixprice",
+                    dataclass_validated=False,
+                    dataclass_validation_error="old validation error",
+                ),
+                RunArtifact(
+                    run_id=resolved_new_run.id,
+                    source="output_gz",
+                    parser_name="fixprice",
+                    dataclass_validated=True,
+                    dataclass_validation_error=None,
+                ),
+                RunArtifact(
+                    run_id=unresolved_run.id,
+                    source="output_gz",
+                    parser_name="chizhik",
+                    dataclass_validated=False,
+                    dataclass_validation_error="missing required field: products",
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        response = client.get("/api/validation-errors")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 1
+        assert len(body["items"]) == 1
+        item = body["items"][0]
+        assert item["task_id"] == task_unresolved.id
+        assert item["run_id"] == "c" * 32
+        assert item["store"] == "C902"
+        assert item["parser_name"] == "chizhik"
+        assert item["is_active"] is False
+        assert "missing required field" in str(item["dataclass_validation_error"])
 
 
 class _FakeParserSocket:

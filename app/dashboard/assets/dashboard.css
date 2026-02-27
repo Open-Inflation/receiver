@@ -200,6 +200,22 @@ button:hover {
   border-color: rgba(59, 213, 255, 0.9);
 }
 
+.btn-link {
+  font: 600 0.92rem/1.1 "IBM Plex Sans", "Noto Sans", sans-serif;
+  border-radius: 12px;
+  border: 1px solid rgba(146, 173, 247, 0.4);
+  background: rgba(11, 16, 30, 0.88);
+  color: var(--text);
+  padding: 10px 12px;
+  text-decoration: none;
+  transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+
+.btn-link:hover {
+  transform: translateY(-1px);
+  border-color: rgba(59, 213, 255, 0.9);
+}
+
 button.soft {
   border-color: rgba(255, 172, 94, 0.46);
   background: linear-gradient(135deg, rgba(255, 172, 94, 0.2), rgba(255, 172, 94, 0.07));
@@ -301,6 +317,30 @@ td select {
   border-radius: 12px;
   padding: 10px;
   background: rgba(10, 16, 31, 0.74);
+}
+
+.validation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.validation-item {
+  border: 1px solid rgba(255, 172, 94, 0.28);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(28, 18, 8, 0.3);
+}
+
+.validation-error-text {
+  margin: 10px 0 0;
+  border: 1px solid rgba(255, 172, 94, 0.34);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(10, 7, 4, 0.68);
+  color: #ffd8b0;
+  font: 500 0.81rem/1.35 ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .run {

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Receiver Validation Errors</title>
+  <link rel="stylesheet" href="/assets/dashboard.css" />
+</head>
+<body>
+  <main class="layout">
+    <section class="hero">
+      <h1>Validation Fix Queue</h1>
+      <p>
+        Подлежащие устранению ошибки dataclass validation. Для каждой задачи учитывается только
+        последний успешный run: если он невалиден, задача попадает в этот список.
+      </p>
+      <div class="hero-toolbar">
+        <button id="refresh">Обновить данные</button>
+        <a href="/" class="btn-link">На главный дашборд</a>
+        <span class="muted">Ошибок: <span id="validation-count">0</span></span>
+        <span class="muted">Обновлено: <span id="generated-at">—</span></span>
+        <span class="muted">Часовой пояс: <span id="timezone-label">—</span></span>
+      </div>
+      <div class="flash" id="flash"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Ошибки валидации</h2>
+      <div class="validation-list" id="validation-list"></div>
+    </section>
+  </main>
+
+  <script src="/assets/validation_errors.js" defer></script>
+</body>
+</html>

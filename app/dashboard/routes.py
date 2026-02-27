@@ -357,4 +357,91 @@ def create_dashboard_router(
         finally:
             session.close()
 
+    @router.get("/api/validation-errors")
+    def validation_errors() -> dict[str, object]:
+        session = session_factory()
+        try:
+            now = utcnow()
+            rows = session.execute(
+                select(
+                    TaskRun.task_id,
+                    TaskRun.id,
+                    TaskRun.assigned_at,
+                    TaskRun.finished_at,
+                    CrawlTask.city,
+                    CrawlTask.store,
+                    CrawlTask.parser_name,
+                    CrawlTask.is_active,
+                    RunArtifact.dataclass_validated,
+                    RunArtifact.dataclass_validation_error,
+                    TaskRun.dispatch_meta_json,
+                )
+                .join(RunArtifact, RunArtifact.run_id == TaskRun.id)
+                .join(CrawlTask, CrawlTask.id == TaskRun.task_id)
+                .where(
+                    CrawlTask.deleted_at.is_(None),
+                    TaskRun.status == "success",
+                )
+                .order_by(
+                    TaskRun.task_id.asc(),
+                    TaskRun.assigned_at.desc(),
+                    TaskRun.id.desc(),
+                )
+            ).all()
+
+            # For each task we keep only the latest successful run.
+            # If that latest run still fails dataclass validation, it is unresolved.
+            scanned_task_ids: set[int] = set()
+            unresolved: list[dict[str, object]] = []
+            for (
+                task_id,
+                run_id,
+                assigned_at,
+                finished_at,
+                city,
+                store,
+                parser_name,
+                is_active,
+                dataclass_validated,
+                dataclass_validation_error,
+                dispatch_meta_json,
+            ) in rows:
+                normalized_task_id = int(task_id)
+                if normalized_task_id in scanned_task_ids:
+                    continue
+                scanned_task_ids.add(normalized_task_id)
+                if dataclass_validated is not False:
+                    continue
+
+                run_meta = dispatch_meta(dispatch_meta_json)
+                remote_status = str(run_meta.get("remote_status", "")).strip().lower() or None
+                unresolved.append(
+                    {
+                        "task_id": normalized_task_id,
+                        "run_id": str(run_id),
+                        "city": city,
+                        "store": store,
+                        "parser_name": parser_name,
+                        "is_active": bool(is_active),
+                        "assigned_at": as_utc(assigned_at).isoformat() if assigned_at else None,
+                        "finished_at": as_utc(finished_at).isoformat() if finished_at else None,
+                        "remote_status": remote_status,
+                        "dataclass_validation_error": dataclass_validation_error,
+                    }
+                )
+
+            unresolved.sort(key=lambda item: str(item.get("assigned_at") or ""), reverse=True)
+            LOGGER.debug(
+                "Dashboard validation errors listed: unresolved=%s scanned_tasks=%s",
+                len(unresolved),
+                len(scanned_task_ids),
+            )
+            return {
+                "generated_at": now.isoformat(),
+                "total": len(unresolved),
+                "items": unresolved,
+            }
+        finally:
+            session.close()
+
     return router
