@@ -67,6 +67,13 @@ mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_task_runs
 - `ARTIFACT_JSON_MEMBER_MAX_BYTES` - лимит размера JSON файла внутри артефакта/`output_json` (по умолчанию `16777216`)
 - `IMAGE_ARCHIVE_MAX_FILE_BYTES` - лимит размера одной картинки в `images/` архива (по умолчанию `12582912`)
 - `IMAGE_ARCHIVE_MAX_FILES` - лимит числа картинок в `images/` архива (по умолчанию `2000`)
+- `CONVERTER_TRIGGER_URL` - URL trigger API конвертера (например `http://127.0.0.1:8090/trigger`); если не задан, trigger не отправляется
+- `CONVERTER_TRIGGER_TOKEN` - Bearer token для trigger API конвертера
+- `CONVERTER_TRIGGER_TIMEOUT_SEC` - timeout trigger-запроса (по умолчанию `3`)
+- `CONVERTER_TRIGGER_RECEIVER_DB` - опционально переопределяет `receiver_db` в payload trigger-запроса
+- `CONVERTER_TRIGGER_CATALOG_DB` - опционально переопределяет `catalog_db` в payload trigger-запроса
+- `CONVERTER_TRIGGER_BATCH_SIZE` - опционально переопределяет `batch_size` в payload trigger-запроса
+- `CONVERTER_TRIGGER_MAX_BATCHES` - опционально переопределяет `max_batches` в payload trigger-запроса
 
 ## Установка
 
