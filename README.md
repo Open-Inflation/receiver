@@ -43,6 +43,7 @@
 mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_drop_raw_task_run_storage.sql
 mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_run_artifacts_parser_name_drop_payload.sql
 mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_task_runs_assigned_invariant.sql
+mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260301_ingest_performance_indexes.sql
 ```
 
 ## Переменные окружения
@@ -54,8 +55,9 @@ mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_task_runs
 - `STORAGE_API_TOKEN` - Bearer-токен для `POST /api/images` storage-сервера
 - `PARSER_SRC_PATH` - путь к `../parser/src` для мягкой интеграции parser-модуля
 - `LEASE_TTL_MINUTES` - время аренды задачи оркестратором (по умолчанию `30`)
-- `ORCHESTRATOR_MAX_CLAIMS_PER_CYCLE` - максимум новых задач за один цикл bridge (по умолчанию `5`)
-- `ORCHESTRATOR_ASSIGNED_PARALLELISM` - параллелизм обработки `assigned` run в bridge (по умолчанию `4`)
+- `ORCHESTRATOR_MAX_CLAIMS_PER_CYCLE` - максимум новых задач за один цикл bridge (по умолчанию `2`)
+- `ORCHESTRATOR_ASSIGNED_PARALLELISM` - параллелизм обработки `assigned` run в bridge (по умолчанию `2`)
+- `ORCHESTRATOR_MAX_ASSIGNED_BACKLOG` - лимит числа `assigned` run; при достижении claim-фаза в цикле bridge пропускается (по умолчанию `1`)
 - `ORCHESTRATOR_AUTO_DISPATCH_ENABLED` - включить авто-диспетчер в parser WebSocket (`true` по умолчанию)
 - `ORCHESTRATOR_WS_URL` - адрес parser orchestrator WS (по умолчанию `ws://127.0.0.1:8765`)
 - `ORCHESTRATOR_WS_PASSWORD` - пароль, если parser запущен с `--auth-password`
@@ -65,6 +67,9 @@ mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_task_runs
 - `ORCHESTRATOR_UPLOAD_ARCHIVE_IMAGES` - после `success` загружать изображения из `output_gz` в storage (`true` по умолчанию)
 - `ARTIFACT_DOWNLOAD_MAX_BYTES` - лимит размера скачиваемого артефакта по `download_url` (по умолчанию `268435456`)
 - `ARTIFACT_JSON_MEMBER_MAX_BYTES` - лимит размера JSON файла внутри артефакта/`output_json` (по умолчанию `16777216`)
+- `ARTIFACT_INGEST_PRODUCTS_PER_TXN` - число товаров в одной транзакции ingest (по умолчанию `200`)
+- `ARTIFACT_INGEST_CATEGORIES_PER_TXN` - число категорий в одной транзакции ingest (по умолчанию `1000`)
+- `ARTIFACT_INGEST_RELATIONS_PER_TXN` - число дочерних строк товаров (`meta/images/wholesale/category_links`) в одной транзакции ingest (по умолчанию `2000`)
 - `IMAGE_ARCHIVE_MAX_FILE_BYTES` - лимит размера одной картинки в `images/` архива (по умолчанию `12582912`)
 - `IMAGE_ARCHIVE_MAX_FILES` - лимит числа картинок в `images/` архива (по умолчанию `2000`)
 - `CONVERTER_TRIGGER_URL` - URL trigger API конвертера (например `http://127.0.0.1:8090/trigger`); если не задан, trigger не отправляется

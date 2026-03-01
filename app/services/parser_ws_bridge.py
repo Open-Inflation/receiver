@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..models import CrawlTask, Orchestrator, TaskRun
@@ -39,8 +40,9 @@ class ParserWsBridge:
         submit_full_catalog: bool,
         upload_archive_images: bool,
         ws_request_timeout_sec: float = 15.0,
-        max_claims_per_cycle: int = 5,
-        assigned_parallelism: int = 4,
+        max_claims_per_cycle: int = 2,
+        assigned_parallelism: int = 2,
+        max_assigned_backlog: int = 1,
     ):
         self._session_factory = session_factory
         self._parser_bridge = parser_bridge
@@ -53,6 +55,7 @@ class ParserWsBridge:
         self._ws_request_timeout_sec = max(1.0, float(ws_request_timeout_sec))
         self._max_claims_per_cycle = max(1, int(max_claims_per_cycle))
         self._assigned_parallelism = max(1, int(assigned_parallelism))
+        self._max_assigned_backlog = max(1, int(max_assigned_backlog))
         self._manager_name = manager_name
         self._default_submit_include_images = submit_include_images
         self._submit_full_catalog = submit_full_catalog
@@ -66,13 +69,14 @@ class ParserWsBridge:
 
     async def run_forever(self) -> None:
         LOGGER.info(
-            "Parser WS bridge started: ws_url=%s manager=%s poll_interval=%.1fs request_timeout=%.1fs max_claims_per_cycle=%s assigned_parallelism=%s",
+            "Parser WS bridge started: ws_url=%s manager=%s poll_interval=%.1fs request_timeout=%.1fs max_claims_per_cycle=%s assigned_parallelism=%s max_assigned_backlog=%s",
             self._ws_url,
             self._manager_name,
             self._poll_interval_sec,
             self._ws_request_timeout_sec,
             self._max_claims_per_cycle,
             self._assigned_parallelism,
+            self._max_assigned_backlog,
         )
         while not self._stop_event.is_set():
             try:
@@ -109,6 +113,20 @@ class ParserWsBridge:
 
         await self._process_assigned_runs(orchestrator_id=orchestrator_id)
 
+        backlog_session = self._session_factory()
+        try:
+            backlog_count = self._assigned_runs_count(backlog_session, orchestrator_id=orchestrator_id)
+        finally:
+            backlog_session.close()
+        if backlog_count >= self._max_assigned_backlog:
+            LOGGER.info(
+                "Claim phase skipped by backlog guard: orchestrator_id=%s assigned=%s backlog_limit=%s",
+                orchestrator_id,
+                backlog_count,
+                self._max_assigned_backlog,
+            )
+            return
+
         claim_session = self._session_factory()
         try:
             orchestrator = claim_session.get(Orchestrator, orchestrator_id)
@@ -133,6 +151,16 @@ class ParserWsBridge:
     async def _claim_and_submit_due_tasks(self, session: Session, orchestrator: Orchestrator) -> None:
         submitted_count = 0
         while submitted_count < self._max_claims_per_cycle:
+            assigned_count = self._assigned_runs_count(session, orchestrator_id=orchestrator.id)
+            if assigned_count >= self._max_assigned_backlog:
+                LOGGER.info(
+                    "Claim loop stopped by backlog guard: orchestrator_id=%s assigned=%s backlog_limit=%s submitted=%s",
+                    orchestrator.id,
+                    assigned_count,
+                    self._max_assigned_backlog,
+                    submitted_count,
+                )
+                break
             claimed = claim_next_due_task(
                 session,
                 orchestrator=orchestrator,
@@ -157,6 +185,16 @@ class ParserWsBridge:
             submitted_count,
             self._max_claims_per_cycle,
         )
+
+    @staticmethod
+    def _assigned_runs_count(session: Session, *, orchestrator_id: str) -> int:
+        count = session.scalar(
+            select(func.count(TaskRun.id)).where(
+                TaskRun.status == "assigned",
+                TaskRun.orchestrator_id == orchestrator_id,
+            )
+        )
+        return int(count or 0)
 
     async def _process_assigned_runs(self, *, orchestrator_id: str) -> None:
         session = self._session_factory()
@@ -347,6 +385,7 @@ class ParserWsBridge:
 
             processed_images = int(run.processed_images or 0)
             try:
+                finalize_start = time.perf_counter()
                 image_results: list[dict[str, Any]] = []
                 output_gz = self._safe_str(job_payload.get("output_gz"))
                 if remote_status == "success" and self._upload_archive_images:
@@ -381,6 +420,13 @@ class ParserWsBridge:
                     status=remote_status,
                     processed_images=processed_images,
                     error_message=error_message,
+                )
+                LOGGER.info(
+                    "Run finalize committed: run_id=%s remote_job_id=%s remote_status=%s duration_ms=%.2f",
+                    run.id,
+                    remote_job_id,
+                    remote_status,
+                    (time.perf_counter() - finalize_start) * 1000.0,
                 )
             except Exception as exc:
                 LOGGER.exception(

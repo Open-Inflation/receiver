@@ -69,7 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or load_settings()
     safe_database_url = make_url(app_settings.database_url).render_as_string(hide_password=True)
     LOGGER.info(
-        "Initializing receiver app: db_url=%s ws_url=%s auto_dispatch=%s image_upload_parallelism=%s ws_request_timeout_sec=%.1f max_claims_per_cycle=%s assigned_parallelism=%s",
+        "Initializing receiver app: db_url=%s ws_url=%s auto_dispatch=%s image_upload_parallelism=%s ws_request_timeout_sec=%.1f max_claims_per_cycle=%s assigned_parallelism=%s max_assigned_backlog=%s ingest_products_per_txn=%s ingest_categories_per_txn=%s ingest_relations_per_txn=%s",
         safe_database_url,
         app_settings.orchestrator_ws_url,
         app_settings.orchestrator_auto_dispatch_enabled,
@@ -77,6 +77,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app_settings.orchestrator_ws_request_timeout_sec,
         app_settings.orchestrator_max_claims_per_cycle,
         app_settings.orchestrator_assigned_parallelism,
+        app_settings.orchestrator_max_assigned_backlog,
+        app_settings.artifact_ingest_products_per_txn,
+        app_settings.artifact_ingest_categories_per_txn,
+        app_settings.artifact_ingest_relations_per_txn,
     )
 
     _ensure_sqlite_parent_dir(app_settings.database_url)
@@ -97,6 +101,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         parser_src_path=app_settings.parser_src_path,
         download_max_bytes=app_settings.artifact_download_max_bytes,
         json_member_max_bytes=app_settings.artifact_json_member_max_bytes,
+        products_per_txn=app_settings.artifact_ingest_products_per_txn,
+        categories_per_txn=app_settings.artifact_ingest_categories_per_txn,
+        relations_per_txn=app_settings.artifact_ingest_relations_per_txn,
     )
     ws_bridge = ParserWsBridge(
         session_factory=session_factory,
@@ -110,6 +117,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ws_request_timeout_sec=app_settings.orchestrator_ws_request_timeout_sec,
         max_claims_per_cycle=app_settings.orchestrator_max_claims_per_cycle,
         assigned_parallelism=app_settings.orchestrator_assigned_parallelism,
+        max_assigned_backlog=app_settings.orchestrator_max_assigned_backlog,
         manager_name=app_settings.orchestrator_manager_name,
         submit_include_images=app_settings.orchestrator_submit_include_images,
         submit_full_catalog=app_settings.orchestrator_submit_full_catalog,

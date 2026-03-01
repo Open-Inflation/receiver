@@ -101,6 +101,7 @@ class TaskRun(Base):
     __table_args__ = (
         Index("ix_task_runs_status_task_id", "status", "task_id"),
         Index("ix_task_runs_assigned_at", "assigned_at"),
+        Index("ix_task_runs_status_orchestrator_assigned_at", "status", "orchestrator_id", "assigned_at"),
     )
 
 
@@ -150,6 +151,10 @@ class RunArtifact(Base):
     products: Mapped[list["RunArtifactProduct"]] = relationship(
         back_populates="artifact",
         cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_run_artifacts_parser_ingested_id", "parser_name", "ingested_at", "id"),
     )
 
 
@@ -268,6 +273,7 @@ class RunArtifactProduct(Base):
 
     __table_args__ = (
         Index("ix_run_artifact_products_artifact_sku", "artifact_id", "sku"),
+        Index("ix_run_artifact_products_artifact_id_id", "artifact_id", "id"),
     )
 
 

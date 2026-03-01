@@ -20,12 +20,16 @@ class Settings:
     image_archive_max_files: int = 2000
     artifact_download_max_bytes: int = 256 * 1024 * 1024
     artifact_json_member_max_bytes: int = 100 * 1024 * 1024
+    artifact_ingest_products_per_txn: int = 200
+    artifact_ingest_categories_per_txn: int = 1000
+    artifact_ingest_relations_per_txn: int = 2000
     orchestrator_ws_url: str = "ws://127.0.0.1:8765"
     orchestrator_ws_password: str | None = None
     orchestrator_poll_interval_sec: float = 5.0
     orchestrator_ws_request_timeout_sec: float = 15.0
-    orchestrator_max_claims_per_cycle: int = 5
-    orchestrator_assigned_parallelism: int = 4
+    orchestrator_max_claims_per_cycle: int = 2
+    orchestrator_assigned_parallelism: int = 2
+    orchestrator_max_assigned_backlog: int = 1
     orchestrator_manager_name: str = "parser-ws"
     orchestrator_auto_dispatch_enabled: bool = True
     orchestrator_submit_include_images: bool = True
@@ -102,17 +106,41 @@ def load_settings() -> Settings:
     except ValueError:
         artifact_json_member_max_bytes = 100 * 1024 * 1024
 
-    max_claims_raw = os.getenv("ORCHESTRATOR_MAX_CLAIMS_PER_CYCLE", "5")
+    max_claims_raw = os.getenv("ORCHESTRATOR_MAX_CLAIMS_PER_CYCLE", "2")
     try:
         orchestrator_max_claims_per_cycle = max(1, int(max_claims_raw))
     except ValueError:
-        orchestrator_max_claims_per_cycle = 5
+        orchestrator_max_claims_per_cycle = 2
 
-    assigned_parallel_raw = os.getenv("ORCHESTRATOR_ASSIGNED_PARALLELISM", "4")
+    assigned_parallel_raw = os.getenv("ORCHESTRATOR_ASSIGNED_PARALLELISM", "2")
     try:
         orchestrator_assigned_parallelism = max(1, int(assigned_parallel_raw))
     except ValueError:
-        orchestrator_assigned_parallelism = 4
+        orchestrator_assigned_parallelism = 2
+
+    max_assigned_backlog_raw = os.getenv("ORCHESTRATOR_MAX_ASSIGNED_BACKLOG", "1")
+    try:
+        orchestrator_max_assigned_backlog = max(1, int(max_assigned_backlog_raw))
+    except ValueError:
+        orchestrator_max_assigned_backlog = 1
+
+    ingest_products_per_txn_raw = os.getenv("ARTIFACT_INGEST_PRODUCTS_PER_TXN", "200")
+    try:
+        artifact_ingest_products_per_txn = max(1, int(ingest_products_per_txn_raw))
+    except ValueError:
+        artifact_ingest_products_per_txn = 200
+
+    ingest_categories_per_txn_raw = os.getenv("ARTIFACT_INGEST_CATEGORIES_PER_TXN", "1000")
+    try:
+        artifact_ingest_categories_per_txn = max(1, int(ingest_categories_per_txn_raw))
+    except ValueError:
+        artifact_ingest_categories_per_txn = 1000
+
+    ingest_relations_per_txn_raw = os.getenv("ARTIFACT_INGEST_RELATIONS_PER_TXN", "2000")
+    try:
+        artifact_ingest_relations_per_txn = max(1, int(ingest_relations_per_txn_raw))
+    except ValueError:
+        artifact_ingest_relations_per_txn = 2000
 
     return Settings(
         database_url=database_url,
@@ -125,12 +153,16 @@ def load_settings() -> Settings:
         image_archive_max_files=image_archive_max_files,
         artifact_download_max_bytes=artifact_download_max_bytes,
         artifact_json_member_max_bytes=artifact_json_member_max_bytes,
+        artifact_ingest_products_per_txn=artifact_ingest_products_per_txn,
+        artifact_ingest_categories_per_txn=artifact_ingest_categories_per_txn,
+        artifact_ingest_relations_per_txn=artifact_ingest_relations_per_txn,
         orchestrator_ws_url=orchestrator_ws_url,
         orchestrator_ws_password=orchestrator_ws_password if orchestrator_ws_password else None,
         orchestrator_poll_interval_sec=poll_interval,
         orchestrator_ws_request_timeout_sec=ws_request_timeout_sec,
         orchestrator_max_claims_per_cycle=orchestrator_max_claims_per_cycle,
         orchestrator_assigned_parallelism=orchestrator_assigned_parallelism,
+        orchestrator_max_assigned_backlog=orchestrator_max_assigned_backlog,
         orchestrator_manager_name=orchestrator_manager_name,
         orchestrator_auto_dispatch_enabled=_env_bool("ORCHESTRATOR_AUTO_DISPATCH_ENABLED", True),
         orchestrator_submit_include_images=_env_bool("ORCHESTRATOR_SUBMIT_INCLUDE_IMAGES", True),

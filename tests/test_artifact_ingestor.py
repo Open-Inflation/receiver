@@ -20,6 +20,23 @@ from app.models import (
 )
 
 
+def _create_assigned_run(client, *, city: str, store: str, orchestrator_name: str) -> str:
+    create_task = client.post(
+        "/api/tasks",
+        json={
+            "city": city,
+            "store": store,
+            "frequency_hours": 24,
+        },
+    )
+    assert create_task.status_code == 201
+
+    token = _register_orchestrator(client, name=orchestrator_name)
+    assignment = client.post("/api/orchestrators/next-task", headers=_auth(token)).json()["assignment"]
+    assert assignment is not None
+    return str(assignment["run_id"])
+
+
 def _register_orchestrator(client, name: str = "orch-artifact") -> str:
     response = client.post("/api/orchestrators/register", json={"name": name})
     assert response.status_code == 200
@@ -345,3 +362,196 @@ def test_ingest_is_idempotent_for_same_run(client, tmp_path):
         assert artifact.parser_name == "fixprice"
     finally:
         session.close()
+
+
+def test_large_payload_ingests_with_small_chunks(client, tmp_path):
+    categories = []
+    for idx in range(6):
+        categories.append(
+            {
+                "uid": f"cat-{idx}",
+                "alias": f"alias-{idx}",
+                "title": f"Category {idx}",
+                "adult": False,
+                "icon": None,
+                "banner": None,
+                "children": [],
+            }
+        )
+
+    products = []
+    for idx in range(5):
+        products.append(
+            {
+                "sku": f"SKU-{idx}",
+                "plu": f"PLU-{idx}",
+                "source_page_url": f"https://example.test/p/{idx}",
+                "title": f"Product {idx}",
+                "description": f"Description {idx}",
+                "adult": False,
+                "new": idx % 2 == 0,
+                "promo": False,
+                "season": False,
+                "hit": True,
+                "data_matrix": True,
+                "brand": "Brand",
+                "producer_name": "Producer",
+                "producer_country": "RUS",
+                "composition": "Milk",
+                "meta_data": [
+                    {"name": "Weight", "alias": "weight", "value": "1kg"},
+                    {"name": "Color", "alias": "color", "value": "white"},
+                ],
+                "expiration_date_in_days": 10,
+                "rating": 4.5,
+                "reviews_count": 8,
+                "price": 100 + idx,
+                "discount_price": 90 + idx,
+                "loyal_price": 80 + idx,
+                "wholesale_price": [{"from_items": 3, "price": 70 + idx}],
+                "price_unit": "RUB",
+                "unit": "PCE",
+                "available_count": 5,
+                "package_quantity": 1.0,
+                "package_unit": "LTR",
+                "categories_uid": [f"cat-{idx}", f"cat-{(idx + 1) % 6}"],
+                "main_image": f"images/main_{idx}.jpg",
+                "images": [f"images/extra_{idx}.jpg"],
+            }
+        )
+
+    artifact_payload = {
+        "retail_type": "store",
+        "code": "C-LARGE",
+        "address": "Moscow, Chunk st. 1",
+        "schedule_weekdays": {"open_from": "09:00", "closed_from": "22:00"},
+        "schedule_saturday": {"open_from": "10:00", "closed_from": "21:00"},
+        "schedule_sunday": {"open_from": "11:00", "closed_from": "20:00"},
+        "temporarily_closed": False,
+        "longitude": 37.62,
+        "latitude": 55.75,
+        "administrative_unit": {
+            "settlement_type": "city",
+            "name": "Москва",
+            "alias": None,
+            "country": "RUS",
+            "region": "г. Москва",
+            "longitude": 37.6176,
+            "latitude": 55.7558,
+        },
+        "categories": categories,
+        "products": products,
+    }
+    artifact_path = tmp_path / "artifact-large.json"
+    artifact_path.write_text(json.dumps(artifact_payload, ensure_ascii=False), encoding="utf-8")
+
+    run_id = _create_assigned_run(
+        client,
+        city="Moscow",
+        store="C-LARGE",
+        orchestrator_name="orch-chunk-ingest",
+    )
+
+    ingestor = client.app.state.artifact_ingestor
+    ingestor._products_per_txn = 2
+    ingestor._categories_per_txn = 2
+    ingestor._relations_per_txn = 3
+
+    session = client.app.state.session_factory()
+    try:
+        run = session.get(TaskRun, run_id)
+        assert run is not None
+        result = ingestor.ingest_run_output(session, run=run, output_json=str(artifact_path))
+        assert result["ok"] is True
+
+        artifact = session.scalar(select(RunArtifact).where(RunArtifact.run_id == run_id))
+        assert artifact is not None
+        categories_count = session.scalar(
+            select(func.count(RunArtifactCategory.id)).where(RunArtifactCategory.artifact_id == artifact.id)
+        )
+        products_count = session.scalar(
+            select(func.count(RunArtifactProduct.id)).where(RunArtifactProduct.artifact_id == artifact.id)
+        )
+        meta_count = session.scalar(select(func.count(RunArtifactProductMeta.id)))
+        wholesale_count = session.scalar(select(func.count(RunArtifactProductWholesalePrice.id)))
+        images_count = session.scalar(select(func.count(RunArtifactProductImage.id)))
+        product_categories_count = session.scalar(select(func.count(RunArtifactProductCategory.id)))
+
+        assert categories_count == 6
+        assert products_count == 5
+        assert meta_count == 10
+        assert wholesale_count == 5
+        assert images_count == 10
+        assert product_categories_count == 10
+    finally:
+        session.close()
+
+
+def test_ingest_cleanup_removes_partial_artifact_on_chunk_failure(client, tmp_path):
+    artifact_payload = {
+        "retail_type": "store",
+        "code": "C-FAIL",
+        "address": "Moscow, Fail st. 1",
+        "schedule_weekdays": {"open_from": "09:00", "closed_from": "22:00"},
+        "schedule_saturday": {"open_from": "10:00", "closed_from": "21:00"},
+        "schedule_sunday": {"open_from": "11:00", "closed_from": "20:00"},
+        "temporarily_closed": False,
+        "longitude": 37.62,
+        "latitude": 55.75,
+        "categories": [{"uid": "cat-fail", "title": "Fail", "children": []}],
+        "products": [
+            {
+                "sku": "FAIL-1",
+                "title": "Fail product 1",
+                "unit": "PCE",
+                "images": ["images/a.jpg"],
+                "categories_uid": ["cat-fail"],
+            },
+            {
+                "sku": "FAIL-2",
+                "title": "Fail product 2",
+                "unit": "PCE",
+                "images": ["images/b.jpg"],
+                "categories_uid": ["cat-fail"],
+            },
+        ],
+    }
+    artifact_path = tmp_path / "artifact-fail.json"
+    artifact_path.write_text(json.dumps(artifact_payload, ensure_ascii=False), encoding="utf-8")
+
+    run_id = _create_assigned_run(
+        client,
+        city="Moscow",
+        store="C-FAIL",
+        orchestrator_name="orch-chunk-fail",
+    )
+
+    ingestor = client.app.state.artifact_ingestor
+    ingestor._products_per_txn = 1
+    ingestor._relations_per_txn = 1
+    original_persist_relations = ingestor._persist_product_relations
+
+    def _failing_persist_relations(*args, **kwargs):
+        raise RuntimeError("forced relation failure")
+
+    ingestor._persist_product_relations = _failing_persist_relations
+
+    session = client.app.state.session_factory()
+    try:
+        run = session.get(TaskRun, run_id)
+        assert run is not None
+        try:
+            ingestor.ingest_run_output(session, run=run, output_json=str(artifact_path))
+            raise AssertionError("Expected ingest failure")
+        except RuntimeError as exc:
+            assert "forced relation failure" in str(exc)
+    finally:
+        ingestor._persist_product_relations = original_persist_relations
+        session.close()
+
+    verify_session = client.app.state.session_factory()
+    try:
+        artifact_count = verify_session.scalar(select(func.count(RunArtifact.id)).where(RunArtifact.run_id == run_id))
+        assert artifact_count == 0
+    finally:
+        verify_session.close()

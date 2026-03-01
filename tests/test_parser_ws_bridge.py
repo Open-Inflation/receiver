@@ -684,6 +684,7 @@ async def _run_claim_cycle_cap_test(database_url: str) -> None:
         submit_full_catalog=True,
         upload_archive_images=True,
         max_claims_per_cycle=2,
+        max_assigned_backlog=10,
     )
 
     submit_calls: list[dict[str, object]] = []
@@ -718,3 +719,122 @@ async def _run_claim_cycle_cap_test(database_url: str) -> None:
 def test_claim_cycle_cap(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'bridge-claim-cap.sqlite3'}"
     asyncio.run(_run_claim_cycle_cap_test(db_url))
+
+
+async def _run_backlog_guard_skips_claim_test(database_url: str) -> None:
+    engine = create_sqlalchemy_engine(database_url)
+    session_factory = create_session_factory(engine)
+    Base.metadata.create_all(bind=engine)
+
+    session = session_factory()
+    try:
+        now = utcnow()
+        orchestrator = Orchestrator(
+            id="b" * 32,
+            name="parser-ws-backlog",
+            token="k" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        assigned_task = CrawlTask(
+            city="3",
+            store="BACKLOG-ASSIGNED",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+            last_crawl_at=now,
+            lease_owner_id=orchestrator.id,
+        )
+        due_task = CrawlTask(
+            city="3",
+            store="BACKLOG-DUE",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add_all([orchestrator, assigned_task, due_task])
+        session.commit()
+        session.refresh(assigned_task)
+        session.refresh(due_task)
+
+        session.add(
+            TaskRun(
+                id="c" * 32,
+                task_id=assigned_task.id,
+                orchestrator_id=orchestrator.id,
+                status="assigned",
+                assigned_at=now,
+                dispatch_meta_json={"remote_job_id": "job-backlog"},
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    bridge = ParserWsBridge(
+        session_factory=session_factory,
+        parser_bridge=DummyParserBridge(),
+        image_pipeline=DummyImagePipeline(),
+        artifact_ingestor=DummyArtifactIngestor(),
+        lease_ttl_minutes=30,
+        ws_url="ws://127.0.0.1:8765",
+        ws_password=None,
+        poll_interval_sec=0.2,
+        manager_name="parser-ws-backlog",
+        submit_include_images=True,
+        submit_full_catalog=True,
+        upload_archive_images=True,
+        max_claims_per_cycle=2,
+        max_assigned_backlog=1,
+    )
+    bridge._manager_orchestrator_id = "b" * 32
+
+    submit_calls: list[dict[str, object]] = []
+
+    async def fake_ws_request(payload):
+        action = payload.get("action")
+        if action == "ping":
+            return {"ok": True, "action": "pong"}
+        if action == "status":
+            return {
+                "ok": True,
+                "action": "status",
+                "job": {
+                    "job_id": payload.get("job_id"),
+                    "status": "queued",
+                    "output_json": None,
+                    "output_gz": None,
+                },
+            }
+        if action == "submit_store":
+            submit_calls.append(dict(payload))
+            return {"ok": True, "action": "submit_store", "job_id": "unexpected", "status": "queued"}
+        raise AssertionError(f"Unexpected payload: {payload}")
+
+    bridge._ws_request = fake_ws_request  # type: ignore[method-assign]
+    await bridge.run_cycle()
+
+    check_session = session_factory()
+    try:
+        total_runs = check_session.scalar(select(func.count(TaskRun.id)))
+        assigned_runs = check_session.scalar(select(func.count(TaskRun.id)).where(TaskRun.status == "assigned"))
+        assert total_runs == 1
+        assert assigned_runs == 1
+        due_task = check_session.scalar(select(CrawlTask).where(CrawlTask.store == "BACKLOG-DUE"))
+        assert due_task is not None
+        assert due_task.lease_owner_id is None
+    finally:
+        check_session.close()
+        engine.dispose()
+
+    assert submit_calls == []
+
+
+def test_backlog_guard_skips_claim(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'bridge-backlog-guard.sqlite3'}"
+    asyncio.run(_run_backlog_guard_skips_claim_test(db_url))
