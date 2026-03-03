@@ -10,7 +10,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import CrawlTask, Orchestrator, TaskRun
-from .converter_trigger import notify_converter_run_finished
 
 
 TERMINAL_RUN_STATUSES = {"success", "error"}
@@ -228,8 +227,4 @@ def finish_run(
         run.status,
         run.processed_images,
     )
-    if run.status == "success" and task is not None:
-        parser_name = str(task.parser_name or "").strip()
-        if parser_name:
-            notify_converter_run_finished(run_id=run.id, parser_name=parser_name)
     return run
