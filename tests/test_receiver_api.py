@@ -58,6 +58,8 @@ def test_task_lifecycle_success(client):
     runs = client.get(f"/api/runs/{run_id}", headers=_auth(token))
     assert runs.status_code == 200
     assert runs.json()["status"] == "success"
+    assert runs.json()["converter_elapsed_sec"] == 0
+    assert runs.json()["finish"] is None
 
     tasks = client.get("/api/tasks")
     assert tasks.status_code == 200
@@ -221,3 +223,5 @@ def test_upload_images_from_archive(client, tmp_path, monkeypatch):
     assert run.status_code == 200
     run_body = run.json()
     assert run_body["processed_images"] == 1
+    assert run_body["converter_elapsed_sec"] == 0
+    assert run_body["finish"] is None

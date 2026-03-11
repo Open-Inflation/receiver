@@ -109,4 +109,6 @@ class TaskRunOut(BaseModel):
     finished_at: datetime | None
     dispatch_meta_json: dict[str, Any] | None
     processed_images: int
+    converter_elapsed_sec: int
+    finish: datetime | None
     error_message: str | None

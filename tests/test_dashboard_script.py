@@ -302,6 +302,8 @@ def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
         assert recent["can_open_live_log"] is True
         assert recent["display_status"] == "assigned"
         assert recent["validation_failed"] is False
+        assert recent["converter_elapsed_sec"] == 0
+        assert recent["finish"] is None
 
     assert first_payload["event"] == "snapshot"
     assert first_payload["lines"] == ["line-a", "line-b"]

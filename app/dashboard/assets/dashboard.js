@@ -325,6 +325,7 @@
           <div class="muted">task #${run.task_id} • ${run.city || '—'} / ${run.store || '—'}</div>
           <div class="muted">orch: ${run.orchestrator_name || '—'}</div>
           <div class="muted">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
+          <div class="muted">converter: ${Number(run.converter_elapsed_sec || 0)}s • finish: ${fmtDate(run.finish)}</div>
           ${validationText}
           ${errorText}
           <div class="muted">${liveLogText}</div>

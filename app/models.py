@@ -125,6 +125,8 @@ class TaskRun(Base):
 
     dispatch_meta_json: Mapped[dict[str, Any] | None] = mapped_column(_json_postgres(), nullable=True)
     processed_images: Mapped[int] = mapped_column(_bigint_sqlite(), nullable=False, default=0)
+    converter_elapsed_sec: Mapped[int] = mapped_column(_bigint_sqlite(), nullable=False, default=0)
+    finish: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     task: Mapped[CrawlTask] = relationship(back_populates="runs")

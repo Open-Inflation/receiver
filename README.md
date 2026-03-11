@@ -28,7 +28,9 @@
 В таблицу `task_runs`:
 - `dispatch_meta_json` - только служебные метаданные bridge (`remote_job_id`, служебные статусы);
 - `processed_images` - количество успешно загруженных изображений;
-- `status`, `error_message`, `finished_at`.
+- `status`, `error_message`, `finished_at`;
+- `converter_elapsed_sec` - накопленное время (в секундах), которое `converter` потратил на перенос чанков этого run;
+- `finish` - метка времени завершения consume-delete этим `converter`.
 
 Детальный payload скрапера и сырой список загрузки изображений в `task_runs` больше не сохраняются.
 Нормализованные данные сохраняются в `run_artifacts*`.
