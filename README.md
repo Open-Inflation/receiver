@@ -6,12 +6,11 @@
 - отправка изображений на отдельный storage-сервер (`../storage`) без конвертации;
 - сохранение нормализованного артефакта в БД.
 
-Конвертация изображений выполняется на стороне `storage`.
+`receiver` только загружает изображения в storage (временные URL).
+Перенос в permanent storage и замена URL выполняются только в `converter` при записи в целевую БД.
 `receiver` автоматически отправляет задачи в оркестратор `parser` по WebSocket (`submit_store/status`), если включен bridge.
-При старте применяется легаси-патч для `crawl_tasks.deleted_at/include_images`.
-Изменения схемы `task_runs` выполняются вручную.
 
-Используется SQLAlchemy ORM и MySQL. Для локальных тестов поддерживается SQLite.
+Используется SQLAlchemy ORM и PostgreSQL (`psycopg`). Для локальных тестов поддерживается SQLite.
 
 ## Что хранится в таблице задач
 
@@ -35,21 +34,15 @@
 Нормализованные данные сохраняются в `run_artifacts*`.
 В `run_artifacts` хранится `parser_name` (какой парсер выполнил обход), сырой `payload_json` не хранится.
 
-## Ручные миграции (обязательно)
+## Миграции
 
-Перед запуском новой версии примените SQL-миграции:
-
-```bash
-mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_drop_raw_task_run_storage.sql
-mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_run_artifacts_parser_name_drop_payload.sql
-mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260226_task_runs_assigned_invariant.sql
-mysql -h127.0.0.1 -P3306 -uUSER -p DBNAME < migrations/manual/20260301_ingest_performance_indexes.sql
-```
+Для PostgreSQL runtime схема создается ORM-моделями (`Base.metadata.create_all`) и актуальными типами (`BIGINT/JSONB/ENUM/TIMESTAMPTZ/NUMERIC`).
 
 ## Переменные окружения
 
 - `DATABASE_URL` - URL БД, например:
-  - MySQL: `mysql+pymysql://user:pass@127.0.0.1:3306/receiver`
+  - PostgreSQL: `postgresql+psycopg://user:pass@127.0.0.1:5432/receiver`
+  - PostgreSQL (alias): `postgresql://user:pass@127.0.0.1:5432/receiver`
   - SQLite (по умолчанию): `sqlite:///data/receiver.db`
 - `STORAGE_BASE_URL` - base URL storage-сервера (`http://127.0.0.1:8000`)
 - `STORAGE_API_TOKEN` - Bearer-токен для `POST /api/images` storage-сервера

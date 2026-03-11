@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -11,6 +12,37 @@ from .database import Base
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+RUN_STATUS_ENUM = Enum(
+    "assigned",
+    "success",
+    "error",
+    name="task_run_status",
+    native_enum=True,
+    create_constraint=True,
+    validate_strings=True,
+)
+
+
+def _bigint_sqlite() -> BigInteger:
+    return BigInteger().with_variant(Integer(), "sqlite")
+
+
+def _json_postgres() -> JSON:
+    return JSON().with_variant(JSONB(), "postgresql")
+
+
+def _money_numeric() -> Numeric:
+    return Numeric(12, 4).with_variant(Float(), "sqlite")
+
+
+def _coord_numeric() -> Numeric:
+    return Numeric(9, 6).with_variant(Float(), "sqlite")
+
+
+def _quantity_numeric() -> Numeric:
+    return Numeric(14, 4).with_variant(Float(), "sqlite")
 
 
 class Orchestrator(Base):
@@ -35,7 +67,7 @@ class Orchestrator(Base):
 class CrawlTask(Base):
     __tablename__ = "crawl_tasks"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
 
     city: Mapped[str] = mapped_column(String(120), nullable=False)
     store: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -73,21 +105,26 @@ class CrawlTask(Base):
 class TaskRun(Base):
     __tablename__ = "task_runs"
 
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
 
-    task_id: Mapped[int] = mapped_column(ForeignKey("crawl_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id: Mapped[int] = mapped_column(
+        _bigint_sqlite(),
+        ForeignKey("crawl_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     orchestrator_id: Mapped[str] = mapped_column(
         ForeignKey("orchestrators.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
 
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="assigned")
+    status: Mapped[str] = mapped_column(RUN_STATUS_ENUM, nullable=False, default="assigned")
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    dispatch_meta_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    processed_images: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dispatch_meta_json: Mapped[dict[str, Any] | None] = mapped_column(_json_postgres(), nullable=True)
+    processed_images: Mapped[int] = mapped_column(_bigint_sqlite(), nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     task: Mapped[CrawlTask] = relationship(back_populates="runs")
@@ -108,7 +145,7 @@ class TaskRun(Base):
 class RunArtifact(Base):
     __tablename__ = "run_artifacts"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(
         ForeignKey("task_runs.id", ondelete="CASCADE"),
         nullable=False,
@@ -130,8 +167,8 @@ class RunArtifact(Base):
     schedule_sunday_closed_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     temporarily_closed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
-    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
 
     dataclass_validated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     dataclass_validation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -161,8 +198,9 @@ class RunArtifact(Base):
 class RunArtifactAdministrativeUnit(Base):
     __tablename__ = "run_artifact_administrative_units"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
     artifact_id: Mapped[int] = mapped_column(
+        _bigint_sqlite(),
         ForeignKey("run_artifacts.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
@@ -174,8 +212,8 @@ class RunArtifactAdministrativeUnit(Base):
     alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
     country: Mapped[str | None] = mapped_column(String(32), nullable=True)
     region: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
-    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
 
     artifact: Mapped[RunArtifact] = relationship(back_populates="administrative_unit")
 
@@ -183,8 +221,9 @@ class RunArtifactAdministrativeUnit(Base):
 class RunArtifactCategory(Base):
     __tablename__ = "run_artifact_categories"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
     artifact_id: Mapped[int] = mapped_column(
+        _bigint_sqlite(),
         ForeignKey("run_artifacts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -210,8 +249,9 @@ class RunArtifactCategory(Base):
 class RunArtifactProduct(Base):
     __tablename__ = "run_artifact_products"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
     artifact_id: Mapped[int] = mapped_column(
+        _bigint_sqlite(),
         ForeignKey("run_artifacts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -236,20 +276,20 @@ class RunArtifactProduct(Base):
     composition: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     expiration_date_in_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    rating: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rating: Mapped[float | None] = mapped_column(Numeric(4, 2).with_variant(Float(), "sqlite"), nullable=True)
     reviews_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    discount_price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    loyal_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price: Mapped[float | None] = mapped_column(_money_numeric(), nullable=True)
+    discount_price: Mapped[float | None] = mapped_column(_money_numeric(), nullable=True)
+    loyal_price: Mapped[float | None] = mapped_column(_money_numeric(), nullable=True)
     price_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    available_count: Mapped[float | None] = mapped_column(Float, nullable=True)
-    package_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    available_count: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
+    package_quantity: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
     package_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
-    categories_uid_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    categories_uid_json: Mapped[list[str] | None] = mapped_column(_json_postgres(), nullable=True)
     main_image: Mapped[str | None] = mapped_column(Text, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
@@ -280,8 +320,9 @@ class RunArtifactProduct(Base):
 class RunArtifactProductMeta(Base):
     __tablename__ = "run_artifact_product_meta"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
     product_id: Mapped[int] = mapped_column(
+        _bigint_sqlite(),
         ForeignKey("run_artifact_products.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -298,14 +339,15 @@ class RunArtifactProductMeta(Base):
 class RunArtifactProductWholesalePrice(Base):
     __tablename__ = "run_artifact_product_wholesale_prices"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
     product_id: Mapped[int] = mapped_column(
+        _bigint_sqlite(),
         ForeignKey("run_artifact_products.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    from_items: Mapped[float | None] = mapped_column(Float, nullable=True)
-    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    from_items: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
+    price: Mapped[float | None] = mapped_column(_money_numeric(), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     product: Mapped[RunArtifactProduct] = relationship(back_populates="wholesale_prices")
@@ -314,8 +356,9 @@ class RunArtifactProductWholesalePrice(Base):
 class RunArtifactProductImage(Base):
     __tablename__ = "run_artifact_product_images"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
     product_id: Mapped[int] = mapped_column(
+        _bigint_sqlite(),
         ForeignKey("run_artifact_products.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -330,8 +373,9 @@ class RunArtifactProductImage(Base):
 class RunArtifactProductCategory(Base):
     __tablename__ = "run_artifact_product_categories"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
     product_id: Mapped[int] = mapped_column(
+        _bigint_sqlite(),
         ForeignKey("run_artifact_products.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

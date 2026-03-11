@@ -8,6 +8,12 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 LOGGER = logging.getLogger(__name__)
+_POSTGRES_DRIVERS = {
+    "postgres",
+    "postgresql",
+    "postgres+psycopg",
+    "postgresql+psycopg",
+}
 
 
 class Base(DeclarativeBase):
@@ -42,10 +48,32 @@ def _env_float(name: str, default: float, *, minimum: float | None = None) -> fl
     return value
 
 
+def normalize_database_url(database_url: str) -> str:
+    token = (database_url or "").strip()
+    if not token:
+        raise ValueError("DATABASE_URL is empty")
+
+    url = make_url(token)
+    drivername = (url.drivername or "").lower()
+    if drivername.startswith("sqlite"):
+        return token
+
+    if drivername not in _POSTGRES_DRIVERS:
+        raise ValueError(
+            f"Unsupported DATABASE_URL driver: {url.drivername!r}. "
+            "Only PostgreSQL (postgresql+psycopg://...) or SQLite is supported."
+        )
+
+    if drivername != "postgresql+psycopg":
+        url = url.set(drivername="postgresql+psycopg")
+    return url.render_as_string(hide_password=False)
+
+
 def create_sqlalchemy_engine(database_url: str):
+    normalized_database_url = normalize_database_url(database_url)
     connect_args: dict[str, object] = {}
     engine_kwargs: dict[str, object] = {}
-    if database_url.startswith("sqlite"):
+    if make_url(normalized_database_url).drivername.startswith("sqlite"):
         connect_args["check_same_thread"] = False
     else:
         engine_kwargs["pool_size"] = _env_int("DB_POOL_SIZE", 10, minimum=1)
@@ -54,13 +82,13 @@ def create_sqlalchemy_engine(database_url: str):
         engine_kwargs["pool_recycle"] = _env_int("DB_POOL_RECYCLE_SEC", 1800, minimum=1)
 
     engine = create_engine(
-        database_url,
+        normalized_database_url,
         pool_pre_ping=True,
         future=True,
         connect_args=connect_args,
         **engine_kwargs,
     )
-    safe_database_url = make_url(database_url).render_as_string(hide_password=True)
+    safe_database_url = make_url(normalized_database_url).render_as_string(hide_password=True)
     LOGGER.info(
         "SQLAlchemy engine created: database_url=%s pool_size=%s max_overflow=%s pool_timeout=%s pool_recycle=%s",
         safe_database_url,
