@@ -29,6 +29,9 @@
 - `dispatch_meta_json` - только служебные метаданные bridge (`remote_job_id`, служебные статусы);
 - `processed_images` - количество успешно загруженных изображений;
 - `status`, `error_message`, `finished_at`;
+- `artifact_source`, `artifact_products_count`, `artifact_categories_count`,
+  `artifact_dataclass_validated`, `artifact_dataclass_validation_error`, `artifact_ingested_at` -
+  стабильный run-снимок для dashboard, независимый от дальнейшей очистки `run_artifacts*` converter-ом;
 - `converter_elapsed_sec` - накопленное время (в секундах), которое `converter` потратил на перенос чанков этого run;
 - `finish` - метка времени завершения consume-delete этим `converter`.
 

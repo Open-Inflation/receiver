@@ -109,6 +109,12 @@ class TaskRunOut(BaseModel):
     finished_at: datetime | None
     dispatch_meta_json: dict[str, Any] | None
     processed_images: int
+    artifact_source: str | None
+    artifact_products_count: int
+    artifact_categories_count: int
+    artifact_dataclass_validated: bool | None
+    artifact_dataclass_validation_error: str | None
+    artifact_ingested_at: datetime | None
     converter_elapsed_sec: int
     finish: datetime | None
     error_message: str | None

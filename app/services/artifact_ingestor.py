@@ -134,13 +134,22 @@ class ArtifactIngestor:
             dataclass_validated=dataclass_validated,
             dataclass_validation_error=dataclass_validation_error,
         )
+        product_rows = len(artifact.products)
+        category_rows = len(artifact.categories)
+        run.artifact_source = source
+        run.artifact_products_count = int(product_rows)
+        run.artifact_categories_count = int(category_rows)
+        run.artifact_dataclass_validated = bool(dataclass_validated)
+        run.artifact_dataclass_validation_error = dataclass_validation_error
+        run.artifact_ingested_at = artifact.ingested_at
+        session.commit()
 
         result = {
             "ok": True,
             "source": source,
             "artifact_id": artifact.id,
-            "category_rows": len(artifact.categories),
-            "product_rows": len(artifact.products),
+            "category_rows": category_rows,
+            "product_rows": product_rows,
             "dataclass_validated": dataclass_validated,
             "dataclass_validation_error": dataclass_validation_error,
         }
@@ -149,8 +158,8 @@ class ArtifactIngestor:
             run.id,
             source,
             artifact.id,
-            len(artifact.products),
-            len(artifact.categories),
+            product_rows,
+            category_rows,
             dataclass_validated,
         )
         return result

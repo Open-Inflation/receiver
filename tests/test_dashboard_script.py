@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.dashboard_app import create_dashboard_app
-from app.models import CrawlTask, Orchestrator, RunArtifact, TaskRun
+from app.models import CrawlTask, Orchestrator, TaskRun
 from app.services.scheduler import utcnow
 
 
@@ -138,6 +138,10 @@ def test_dashboard_validation_errors_lists_only_unresolved_latest_success(tmp_pa
             assigned_at=now.replace(minute=0, second=0, microsecond=0),
             finished_at=now.replace(minute=1, second=0, microsecond=0),
             dispatch_meta_json={"remote_status": "success"},
+            artifact_source="output_gz",
+            artifact_dataclass_validated=False,
+            artifact_dataclass_validation_error="old validation error",
+            artifact_ingested_at=now.replace(minute=1, second=0, microsecond=0),
         )
         resolved_new_run = TaskRun(
             id="b" * 32,
@@ -147,6 +151,10 @@ def test_dashboard_validation_errors_lists_only_unresolved_latest_success(tmp_pa
             assigned_at=now.replace(minute=2, second=0, microsecond=0),
             finished_at=now.replace(minute=3, second=0, microsecond=0),
             dispatch_meta_json={"remote_status": "success"},
+            artifact_source="output_gz",
+            artifact_dataclass_validated=True,
+            artifact_dataclass_validation_error=None,
+            artifact_ingested_at=now.replace(minute=3, second=0, microsecond=0),
         )
         unresolved_run = TaskRun(
             id="c" * 32,
@@ -156,35 +164,12 @@ def test_dashboard_validation_errors_lists_only_unresolved_latest_success(tmp_pa
             assigned_at=now.replace(minute=4, second=0, microsecond=0),
             finished_at=now.replace(minute=5, second=0, microsecond=0),
             dispatch_meta_json={"remote_status": "success"},
+            artifact_source="output_gz",
+            artifact_dataclass_validated=False,
+            artifact_dataclass_validation_error="missing required field: products",
+            artifact_ingested_at=now.replace(minute=5, second=0, microsecond=0),
         )
         session.add_all([resolved_old_run, resolved_new_run, unresolved_run])
-        session.commit()
-
-        session.add_all(
-            [
-                RunArtifact(
-                    run_id=resolved_old_run.id,
-                    source="output_gz",
-                    parser_name="fixprice",
-                    dataclass_validated=False,
-                    dataclass_validation_error="old validation error",
-                ),
-                RunArtifact(
-                    run_id=resolved_new_run.id,
-                    source="output_gz",
-                    parser_name="fixprice",
-                    dataclass_validated=True,
-                    dataclass_validation_error=None,
-                ),
-                RunArtifact(
-                    run_id=unresolved_run.id,
-                    source="output_gz",
-                    parser_name="chizhik",
-                    dataclass_validated=False,
-                    dataclass_validation_error="missing required field: products",
-                ),
-            ]
-        )
         session.commit()
     finally:
         session.close()
@@ -454,22 +439,16 @@ def test_dashboard_overview_marks_validation_failed_as_warning(tmp_path: Path):
             assigned_at=now,
             finished_at=now,
             dispatch_meta_json={"remote_job_id": "job-779", "remote_status": "success"},
+            artifact_source="output_gz",
+            artifact_dataclass_validated=False,
+            artifact_dataclass_validation_error="validation failed",
+            artifact_ingested_at=now,
         )
         session.add(task)
         session.add(orchestrator)
         session.flush()
         run.task_id = task.id
         session.add(run)
-        session.flush()
-        session.add(
-            RunArtifact(
-                run_id=run.id,
-                source="output_gz",
-                parser_name="chizhik",
-                dataclass_validated=False,
-                dataclass_validation_error="validation failed",
-            )
-        )
         session.commit()
     finally:
         session.close()

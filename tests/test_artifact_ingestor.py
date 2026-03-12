@@ -212,6 +212,7 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
         wholesale_count = session.scalar(select(func.count(RunArtifactProductWholesalePrice.id)))
         images_count = session.scalar(select(func.count(RunArtifactProductImage.id)))
         product_categories_count = session.scalar(select(func.count(RunArtifactProductCategory.id)))
+        run = session.get(TaskRun, run_id)
 
         assert categories_count == 2
         assert products_count == 1
@@ -219,6 +220,12 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
         assert wholesale_count == 1
         assert images_count == 2  # main + gallery
         assert product_categories_count == 2
+        assert run is not None
+        assert run.artifact_source == "output_json"
+        assert int(run.artifact_products_count) == 1
+        assert int(run.artifact_categories_count) == 2
+        assert run.artifact_dataclass_validated in {True, False}
+        assert run.artifact_ingested_at is not None
     finally:
         session.close()
 
@@ -360,6 +367,9 @@ def test_ingest_is_idempotent_for_same_run(client, tmp_path):
         artifact = session.scalar(select(RunArtifact).where(RunArtifact.run_id == run_id))
         assert artifact is not None
         assert artifact.parser_name == "fixprice"
+        refreshed_run = session.get(TaskRun, run_id)
+        assert refreshed_run is not None
+        assert refreshed_run.artifact_source == "output_json"
     finally:
         session.close()
 
@@ -476,6 +486,7 @@ def test_large_payload_ingests_with_small_chunks(client, tmp_path):
         wholesale_count = session.scalar(select(func.count(RunArtifactProductWholesalePrice.id)))
         images_count = session.scalar(select(func.count(RunArtifactProductImage.id)))
         product_categories_count = session.scalar(select(func.count(RunArtifactProductCategory.id)))
+        refreshed_run = session.get(TaskRun, run_id)
 
         assert categories_count == 6
         assert products_count == 5
@@ -483,6 +494,9 @@ def test_large_payload_ingests_with_small_chunks(client, tmp_path):
         assert wholesale_count == 5
         assert images_count == 10
         assert product_categories_count == 10
+        assert refreshed_run is not None
+        assert int(refreshed_run.artifact_products_count) == 5
+        assert int(refreshed_run.artifact_categories_count) == 6
     finally:
         session.close()
 

@@ -16,7 +16,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import Settings, load_settings
-from app.database import create_session_factory, create_sqlalchemy_engine
+from app.database import create_session_factory, create_sqlalchemy_engine, ensure_task_runs_runtime_columns
 from app.deps import get_current_orchestrator, get_db_session
 from app.logging_utils import ensure_logging_configured
 from app.models import Base, CrawlTask, Orchestrator, TaskRun
@@ -86,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     engine = create_sqlalchemy_engine(app_settings.database_url)
     session_factory = create_session_factory(engine)
     Base.metadata.create_all(bind=engine)
+    ensure_task_runs_runtime_columns(engine)
 
     parser_bridge = ParserBridge(parser_src_path=app_settings.parser_src_path)
     image_pipeline = ImagePipeline(

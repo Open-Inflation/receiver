@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -110,3 +110,54 @@ def create_session_factory(engine) -> sessionmaker[Session]:
     )
     LOGGER.debug("SQLAlchemy session factory created")
     return factory
+
+
+def ensure_task_runs_runtime_columns(engine) -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table("task_runs"):
+        return
+
+    existing_columns = {str(item.get("name")) for item in inspector.get_columns("task_runs")}
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        ddl = {
+            "converter_elapsed_sec": "ALTER TABLE task_runs ADD COLUMN converter_elapsed_sec BIGINT DEFAULT 0",
+            "finish": "ALTER TABLE task_runs ADD COLUMN finish TIMESTAMPTZ",
+            "artifact_source": "ALTER TABLE task_runs ADD COLUMN artifact_source VARCHAR(32)",
+            "artifact_products_count": "ALTER TABLE task_runs ADD COLUMN artifact_products_count BIGINT DEFAULT 0",
+            "artifact_categories_count": "ALTER TABLE task_runs ADD COLUMN artifact_categories_count BIGINT DEFAULT 0",
+            "artifact_dataclass_validated": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validated BOOLEAN",
+            "artifact_dataclass_validation_error": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validation_error TEXT",
+            "artifact_ingested_at": "ALTER TABLE task_runs ADD COLUMN artifact_ingested_at TIMESTAMPTZ",
+        }
+    else:
+        ddl = {
+            "converter_elapsed_sec": "ALTER TABLE task_runs ADD COLUMN converter_elapsed_sec INTEGER DEFAULT 0",
+            "finish": "ALTER TABLE task_runs ADD COLUMN finish TEXT",
+            "artifact_source": "ALTER TABLE task_runs ADD COLUMN artifact_source TEXT",
+            "artifact_products_count": "ALTER TABLE task_runs ADD COLUMN artifact_products_count INTEGER DEFAULT 0",
+            "artifact_categories_count": "ALTER TABLE task_runs ADD COLUMN artifact_categories_count INTEGER DEFAULT 0",
+            "artifact_dataclass_validated": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validated INTEGER",
+            "artifact_dataclass_validation_error": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validation_error TEXT",
+            "artifact_ingested_at": "ALTER TABLE task_runs ADD COLUMN artifact_ingested_at TEXT",
+        }
+
+    executed = 0
+    with engine.begin() as connection:
+        for column_name, statement in ddl.items():
+            if column_name in existing_columns:
+                continue
+            connection.execute(text(statement))
+            executed += 1
+
+        connection.execute(
+            text(
+                "UPDATE task_runs "
+                "SET converter_elapsed_sec = COALESCE(converter_elapsed_sec, 0), "
+                "artifact_products_count = COALESCE(artifact_products_count, 0), "
+                "artifact_categories_count = COALESCE(artifact_categories_count, 0)"
+            )
+        )
+
+    if executed:
+        LOGGER.info("Receiver runtime schema reconciled for task_runs: added_columns=%s", executed)

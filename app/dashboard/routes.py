@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import CrawlTask, Orchestrator, RunArtifact, TaskRun
+from app.models import CrawlTask, Orchestrator, TaskRun
 from app.services.scheduler import as_utc, is_task_due, utcnow
 
 from .schemas import TaskCreateIn, TaskUpdateIn
@@ -256,10 +256,9 @@ def create_dashboard_router(
             warning_runs = int(
                 session.scalar(
                     select(func.count(TaskRun.id))
-                    .join(RunArtifact, RunArtifact.run_id == TaskRun.id)
                     .where(
                         TaskRun.status == "success",
-                        RunArtifact.dataclass_validated.is_(False),
+                        TaskRun.artifact_dataclass_validated.is_(False),
                     )
                 )
                 or 0
@@ -278,13 +277,14 @@ def create_dashboard_router(
                     CrawlTask.city,
                     CrawlTask.store,
                     TaskRun.processed_images,
+                    TaskRun.artifact_products_count,
+                    TaskRun.artifact_categories_count,
                     TaskRun.converter_elapsed_sec,
                     TaskRun.dispatch_meta_json,
-                    RunArtifact.dataclass_validated,
+                    TaskRun.artifact_dataclass_validated,
                 )
                 .join(Orchestrator, Orchestrator.id == TaskRun.orchestrator_id)
                 .join(CrawlTask, CrawlTask.id == TaskRun.task_id)
-                .outerjoin(RunArtifact, RunArtifact.run_id == TaskRun.id)
                 .order_by(TaskRun.assigned_at.desc())
                 .limit(12)
             ).all()
@@ -302,6 +302,8 @@ def create_dashboard_router(
                 city,
                 store,
                 processed_images,
+                artifact_products_count,
+                artifact_categories_count,
                 converter_elapsed_sec,
                 run_dispatch_meta,
                 dataclass_validated,
@@ -327,6 +329,8 @@ def create_dashboard_router(
                         "city": city,
                         "store": store,
                         "processed_images": int(processed_images or 0),
+                        "artifact_products_count": int(artifact_products_count or 0),
+                        "artifact_categories_count": int(artifact_categories_count or 0),
                         "converter_elapsed_sec": int(converter_elapsed_sec or 0),
                         "remote_status": remote_status,
                         "remote_terminal": bool(remote_terminal),
@@ -381,15 +385,15 @@ def create_dashboard_router(
                     CrawlTask.store,
                     CrawlTask.parser_name,
                     CrawlTask.is_active,
-                    RunArtifact.dataclass_validated,
-                    RunArtifact.dataclass_validation_error,
+                    TaskRun.artifact_dataclass_validated,
+                    TaskRun.artifact_dataclass_validation_error,
                     TaskRun.dispatch_meta_json,
                 )
-                .join(RunArtifact, RunArtifact.run_id == TaskRun.id)
                 .join(CrawlTask, CrawlTask.id == TaskRun.task_id)
                 .where(
                     CrawlTask.deleted_at.is_(None),
                     TaskRun.status == "success",
+                    TaskRun.artifact_ingested_at.is_not(None),
                 )
                 .order_by(
                     TaskRun.task_id.asc(),
