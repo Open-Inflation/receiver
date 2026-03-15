@@ -496,6 +496,18 @@ td select {
   width: 120px;
 }
 
+.log-compact-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.log-compact-toggle input {
+  margin: 0;
+}
+
 .log-status {
   color: var(--muted);
   font-size: 0.83rem;
@@ -557,10 +569,11 @@ td select {
   .log-head h3 { font-size: 0.92rem; max-width: calc(100% - 88px); }
   .log-toolbar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     align-items: end;
   }
   .log-tail { width: 100%; max-width: none; }
+  .log-compact-toggle { margin-top: 2px; }
   .log-output { font-size: 0.76rem; line-height: 1.35; }
   table { min-width: 640px; }
 }

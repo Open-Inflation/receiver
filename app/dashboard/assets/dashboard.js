@@ -4,6 +4,8 @@
       logViewer: {
         runId: null,
         socket: null,
+        compactEnabled: true,
+        rawLines: [],
       },
     };
 
@@ -18,6 +20,7 @@
     const runLogStatusEl = document.getElementById('run-log-status');
     const runLogOutputEl = document.getElementById('run-log-output');
     const runLogTailEl = document.getElementById('run-log-tail');
+    const runLogCompactEl = document.getElementById('run-log-compact');
     const timezoneLabelEl = document.getElementById('timezone-label');
     const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     const localDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -97,6 +100,7 @@
       closeLogSocket();
       runLogModalEl.hidden = true;
       state.logViewer.runId = null;
+      state.logViewer.rawLines = [];
       document.body.style.overflow = '';
     }
 
@@ -104,20 +108,178 @@
       return (element.scrollHeight - element.scrollTop - element.clientHeight) < 24;
     }
 
-    function appendLogLines(lines) {
-      if (!Array.isArray(lines) || !lines.length) return;
+    function truncateText(value, maxLength = 96) {
+      const text = String(value ?? '');
+      if (text.length <= maxLength) return text;
+      return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
+    }
+
+    function normalizeRawLine(value) {
+      if (typeof value === 'string') return value;
+      if (value == null) return '';
+      return String(value);
+    }
+
+    function parseStructuredLogLine(line) {
+      if (typeof line !== 'string') return null;
+      const firstSep = line.indexOf(' | ');
+      if (firstSep <= 0) return null;
+      const secondSep = line.indexOf(' | ', firstSep + 3);
+      if (secondSep <= firstSep) return null;
+      const lastSep = line.lastIndexOf(' | ');
+      if (lastSep <= secondSep) return null;
+
+      const timestamp = line.slice(0, firstSep).trim();
+      const level = line.slice(firstSep + 3, secondSep).trim().toUpperCase();
+      const message = line.slice(lastSep + 3).trim();
+      const time = timestamp.length >= 19 ? timestamp.slice(11, 19) : timestamp;
+      return { timestamp, time, level, message };
+    }
+
+    function compactScope(category, subcategory) {
+      const normalizedSubcategory = subcategory && subcategory !== 'None' ? subcategory : 'root';
+      return `${category}/${normalizedSubcategory}`;
+    }
+
+    function parseCollectingMessage(message) {
+      const match = /^Collecting products: category=(\S+) subcategory=(\S+) page=(\d+) limit=(\d+)$/.exec(message);
+      if (!match) return null;
+      return {
+        category: match[1],
+        subcategory: match[2],
+        page: Number(match[3]),
+        limit: Number(match[4]),
+      };
+    }
+
+    function parseCollectedMessage(message) {
+      const match = /^Collected products page: category=(\S+) subcategory=(\S+) page=(\d+) count=(\d+) enriched=(\d+)$/.exec(message);
+      if (!match) return null;
+      return {
+        category: match[1],
+        subcategory: match[2],
+        page: Number(match[3]),
+        count: Number(match[4]),
+        enriched: Number(match[5]),
+      };
+    }
+
+    function parseFailedProductInfoMessage(message) {
+      const match = /^Failed to collect FixPrice product info: category=(\S+) subcategory=(\S+) page=(\d+) url=(\S+) error=(.+)$/.exec(message);
+      if (!match) return null;
+      return {
+        category: match[1],
+        subcategory: match[2],
+        page: Number(match[3]),
+        url: match[4],
+        error: match[5],
+      };
+    }
+
+    function toCompactLogLines(rawLines) {
+      const compactLines = [];
+      let warningGroup = null;
+
+      function flushWarningGroup() {
+        if (!warningGroup) return;
+        const range = warningGroup.firstTime === warningGroup.lastTime
+          ? warningGroup.firstTime
+          : `${warningGroup.firstTime}-${warningGroup.lastTime}`;
+        const scope = compactScope(warningGroup.category, warningGroup.subcategory);
+        const sample = warningGroup.sampleUrl ? ` sample=${truncateText(warningGroup.sampleUrl, 72)}` : '';
+        compactLines.push(
+          `${range} WARN failed product info x${warningGroup.count} ${scope} page=${warningGroup.page} error=${truncateText(warningGroup.error)}${sample}`
+        );
+        warningGroup = null;
+      }
+
+      for (const sourceLine of rawLines) {
+        const rawLine = normalizeRawLine(sourceLine);
+        const parsed = parseStructuredLogLine(rawLine);
+        if (!parsed) {
+          flushWarningGroup();
+          compactLines.push(rawLine);
+          continue;
+        }
+
+        const failed = parseFailedProductInfoMessage(parsed.message);
+        if (failed) {
+          const groupKey = `${failed.category}|${failed.subcategory}|${failed.page}|${failed.error}`;
+          if (warningGroup && warningGroup.key === groupKey) {
+            warningGroup.count += 1;
+            warningGroup.lastTime = parsed.time;
+          } else {
+            flushWarningGroup();
+            warningGroup = {
+              key: groupKey,
+              firstTime: parsed.time,
+              lastTime: parsed.time,
+              count: 1,
+              category: failed.category,
+              subcategory: failed.subcategory,
+              page: failed.page,
+              error: failed.error,
+              sampleUrl: failed.url,
+            };
+          }
+          continue;
+        }
+
+        flushWarningGroup();
+
+        const collecting = parseCollectingMessage(parsed.message);
+        if (collecting) {
+          compactLines.push(
+            `${parsed.time} INFO collecting ${compactScope(collecting.category, collecting.subcategory)} page=${collecting.page} limit=${collecting.limit}`
+          );
+          continue;
+        }
+
+        const collected = parseCollectedMessage(parsed.message);
+        if (collected) {
+          compactLines.push(
+            `${parsed.time} INFO collected ${compactScope(collected.category, collected.subcategory)} page=${collected.page} count=${collected.count} enriched=${collected.enriched}`
+          );
+          continue;
+        }
+
+        compactLines.push(`${parsed.time} ${parsed.level} ${parsed.message}`);
+      }
+
+      flushWarningGroup();
+      return compactLines;
+    }
+
+    function renderLogOutput() {
       const stickToBottom = shouldStickToBottom(runLogOutputEl);
-      const chunk = `${lines.join('\n')}\n`;
-      runLogOutputEl.textContent += chunk;
+      const sourceLines = state.logViewer.rawLines;
+      const displayLines = state.logViewer.compactEnabled
+        ? toCompactLogLines(sourceLines)
+        : sourceLines;
+      runLogOutputEl.textContent = displayLines.length ? `${displayLines.join('\n')}\n` : '';
       if (stickToBottom) {
         runLogOutputEl.scrollTop = runLogOutputEl.scrollHeight;
       }
     }
 
+    function replaceLogLines(lines) {
+      state.logViewer.rawLines = Array.isArray(lines) ? lines.map(normalizeRawLine) : [];
+      renderLogOutput();
+    }
+
+    function pushLogLines(lines) {
+      if (!Array.isArray(lines) || !lines.length) return;
+      state.logViewer.rawLines.push(...lines.map(normalizeRawLine));
+      if (state.logViewer.rawLines.length > 10000) {
+        state.logViewer.rawLines = state.logViewer.rawLines.slice(-10000);
+      }
+      renderLogOutput();
+    }
+
     function connectRunLog(runId) {
       closeLogSocket();
       state.logViewer.runId = runId;
-      runLogOutputEl.textContent = '';
+      replaceLogLines([]);
       const tailValue = Number(runLogTailEl.value);
       const tailLines = Number.isFinite(tailValue) ? Math.max(0, Math.min(5000, Math.floor(tailValue))) : 200;
       runLogTailEl.value = String(tailLines);
@@ -146,14 +308,13 @@
         }
 
         if (payload.event === 'snapshot') {
-          runLogOutputEl.textContent = '';
-          appendLogLines(payload.lines);
+          replaceLogLines(payload.lines);
           runLogStatusEl.textContent = `Snapshot получен (${Array.isArray(payload.lines) ? payload.lines.length : 0} строк).`;
           return;
         }
 
         if (payload.event === 'append') {
-          appendLogLines(payload.lines);
+          pushLogLines(payload.lines);
           return;
         }
 
@@ -447,6 +608,13 @@
       if (!state.logViewer.runId) return;
       connectRunLog(state.logViewer.runId);
     });
+    if (runLogCompactEl) {
+      runLogCompactEl.checked = state.logViewer.compactEnabled;
+      runLogCompactEl.addEventListener('change', () => {
+        state.logViewer.compactEnabled = !!runLogCompactEl.checked;
+        renderLogOutput();
+      });
+    }
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return;
       if (runLogModalEl.hidden) return;
