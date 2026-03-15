@@ -252,14 +252,7 @@
             ? `Показать мета-данные строки ${index + 1}`
             : `Показать сырую строку ${index + 1}`;
 
-          return `
-            <div class="log-row log-tone-${tone}">
-              <span class="log-meta-wrap">
-                <span class="log-meta-dot" data-log-index="${index}" tabindex="0" role="button" aria-label="${escapeHtml(ariaLabel)}"></span>
-              </span>
-              <span class="log-line-text">${escapeHtml(text)}</span>
-            </div>
-          `;
+          return `<div class="log-row log-tone-${tone}"><span class="log-meta-wrap"><span class="log-meta-dot" data-log-index="${index}" tabindex="0" role="button" aria-label="${escapeHtml(ariaLabel)}"></span></span><span class="log-line-text">${escapeHtml(text)}</span></div>`;
         })
         .join('');
     }

@@ -526,7 +526,7 @@ td select {
   background: rgba(3, 6, 13, 0.95);
   color: #d9e8ff;
   font: 500 0.82rem/1.38 ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace;
-  white-space: pre;
+  white-space: normal;
   word-break: normal;
   overflow-wrap: normal;
   tab-size: 2;
@@ -598,10 +598,20 @@ td select {
   grid-template-columns: minmax(80px, auto) minmax(0, 1fr);
   gap: 8px;
   align-items: start;
+  padding: 4px 6px;
+  border-radius: 6px;
 }
 
 .log-meta-item + .log-meta-item {
-  margin-top: 4px;
+  margin-top: 3px;
+}
+
+.log-meta-item:nth-of-type(odd) {
+  background: rgba(149, 185, 255, 0.08);
+}
+
+.log-meta-item:nth-of-type(even) {
+  background: rgba(149, 185, 255, 0.03);
 }
 
 .log-meta-key {
