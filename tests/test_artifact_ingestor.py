@@ -114,10 +114,15 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
                 "loyal_price": 79.9,
                 "wholesale_price": [{"from_items": 3, "price": 74.5}],
                 "price_unit": "RUB",
-                "unit": "PCE",
+                "unit_net": "PCE",
                 "available_count": 5,
-                "package_quantity": 1.0,
+                "package_quantity_net": 1.0,
+                "package_weight_gross": 1.1,
                 "package_unit": "LTR",
+                "package_count": 2.0,
+                "dimension_height": 10.0,
+                "dimension_width": 20.0,
+                "dimension_depth": 30.0,
                 "categories_uid": ["cat-root", "cat-child"],
                 "main_image": "images/main.jpg",
                 "images": ["images/gallery_1.jpg"],
@@ -191,6 +196,12 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
         )
         assert product is not None
         assert product.main_image == "http://storage.local/images/main.jpg"
+        assert float(product.package_quantity_net) == 1.0
+        assert float(product.package_weight_gross) == 1.1
+        assert float(product.package_count) == 2.0
+        assert float(product.dimension_height) == 10.0
+        assert float(product.dimension_width) == 20.0
+        assert float(product.dimension_depth) == 30.0
 
         product_images = session.scalars(
             select(RunArtifactProductImage)
@@ -420,10 +431,15 @@ def test_large_payload_ingests_with_small_chunks(client, tmp_path):
                 "loyal_price": 80 + idx,
                 "wholesale_price": [{"from_items": 3, "price": 70 + idx}],
                 "price_unit": "RUB",
-                "unit": "PCE",
+                "unit_net": "PCE",
                 "available_count": 5,
-                "package_quantity": 1.0,
+                "package_quantity_net": 1.0,
+                "package_weight_gross": 1.0,
                 "package_unit": "LTR",
+                "package_count": 2.0,
+                "dimension_height": 10.0,
+                "dimension_width": 20.0,
+                "dimension_depth": 30.0,
                 "categories_uid": [f"cat-{idx}", f"cat-{(idx + 1) % 6}"],
                 "main_image": f"images/main_{idx}.jpg",
                 "images": [f"images/extra_{idx}.jpg"],
@@ -517,14 +533,14 @@ def test_ingest_cleanup_removes_partial_artifact_on_chunk_failure(client, tmp_pa
             {
                 "sku": "FAIL-1",
                 "title": "Fail product 1",
-                "unit": "PCE",
+                "unit_net": "PCE",
                 "images": ["images/a.jpg"],
                 "categories_uid": ["cat-fail"],
             },
             {
                 "sku": "FAIL-2",
                 "title": "Fail product 2",
-                "unit": "PCE",
+                "unit_net": "PCE",
                 "images": ["images/b.jpg"],
                 "categories_uid": ["cat-fail"],
             },

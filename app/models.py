@@ -292,10 +292,15 @@ class RunArtifactProduct(Base):
     loyal_price: Mapped[float | None] = mapped_column(_money_numeric(), nullable=True)
     price_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
-    unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    unit_net: Mapped[str | None] = mapped_column(String(32), nullable=True)
     available_count: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
-    package_quantity: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
+    package_quantity_net: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
+    package_weight_gross: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
     package_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    package_count: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
+    dimension_height: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
+    dimension_width: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
+    dimension_depth: Mapped[float | None] = mapped_column(_quantity_numeric(), nullable=True)
 
     categories_uid_json: Mapped[list[str] | None] = mapped_column(_json_postgres(), nullable=True)
     main_image: Mapped[str | None] = mapped_column(Text, nullable=True)
