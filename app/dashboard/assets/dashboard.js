@@ -6,6 +6,7 @@
         socket: null,
         compactEnabled: true,
         rawLines: [],
+        metaAnchorEl: null,
       },
     };
 
@@ -19,6 +20,7 @@
     const runLogTitleEl = document.getElementById('run-log-title');
     const runLogStatusEl = document.getElementById('run-log-status');
     const runLogOutputEl = document.getElementById('run-log-output');
+    const runLogMetaPortalEl = document.getElementById('run-log-meta-portal');
     const runLogTailEl = document.getElementById('run-log-tail');
     const runLogCompactEl = document.getElementById('run-log-compact');
     const timezoneLabelEl = document.getElementById('timezone-label');
@@ -101,6 +103,7 @@
       runLogModalEl.hidden = true;
       state.logViewer.runId = null;
       state.logViewer.rawLines = [];
+      hideMetaPortal();
       document.body.style.overflow = '';
     }
 
@@ -156,17 +159,23 @@
       return `${parsed.timestamp} | ${parsed.message}`;
     }
 
-    function renderMetaPopover(parsed, rawLine) {
-      const entries = parsed
-        ? [
-            { key: 'timestamp', value: parsed.timestamp },
-            { key: 'level', value: parsed.level },
-            { key: 'logger', value: parsed.logger },
-            ...parsed.metadata,
-            { key: 'message', value: parsed.message },
-          ]
-        : [{ key: 'raw', value: rawLine }];
+    function logMetaEntries(parsed, rawLine) {
+      if (!parsed) return [{ key: 'raw', value: rawLine }];
+      return [
+        { key: 'timestamp', value: parsed.timestamp },
+        { key: 'level', value: parsed.level },
+        { key: 'logger', value: parsed.logger },
+        ...parsed.metadata,
+        { key: 'message', value: parsed.message },
+      ];
+    }
 
+    function renderMetaPortalContent(parsed, rawLine) {
+      if (!runLogMetaPortalEl) return;
+      const title = parsed ? 'Распарсенные поля' : 'Сырая строка';
+      const entries = parsed
+        ? logMetaEntries(parsed, rawLine)
+        : [{ key: 'raw', value: rawLine }];
       const rowsHtml = entries
         .map(
           (entry) => `
@@ -178,13 +187,58 @@
         )
         .join('');
 
-      const title = parsed ? 'Распарсенные поля' : 'Сырая строка';
-      return `
-        <div class="log-meta-popover">
-          <div class="log-meta-title">${title}</div>
-          ${rowsHtml}
-        </div>
+      runLogMetaPortalEl.innerHTML = `
+        <div class="log-meta-title">${title}</div>
+        ${rowsHtml}
       `;
+    }
+
+    function positionMetaPortal(anchorEl) {
+      if (!runLogMetaPortalEl || !anchorEl) return;
+      const margin = 10;
+      const anchorRect = anchorEl.getBoundingClientRect();
+      const panelRect = runLogMetaPortalEl.getBoundingClientRect();
+
+      let left = anchorRect.right + 10;
+      if (left + panelRect.width > window.innerWidth - margin) {
+        left = anchorRect.left - panelRect.width - 10;
+      }
+      if (left < margin) {
+        left = margin;
+      }
+
+      let top = anchorRect.top - 8;
+      if (top + panelRect.height > window.innerHeight - margin) {
+        top = window.innerHeight - panelRect.height - margin;
+      }
+      if (top < margin) {
+        top = margin;
+      }
+
+      runLogMetaPortalEl.style.left = `${Math.round(left)}px`;
+      runLogMetaPortalEl.style.top = `${Math.round(top)}px`;
+    }
+
+    function hideMetaPortal() {
+      if (!runLogMetaPortalEl) return;
+      runLogMetaPortalEl.hidden = true;
+      runLogMetaPortalEl.innerHTML = '';
+      state.logViewer.metaAnchorEl = null;
+    }
+
+    function showMetaPortalForDot(dotEl) {
+      if (!runLogMetaPortalEl || !dotEl) return;
+      const index = Number(dotEl.dataset.logIndex);
+      if (!Number.isInteger(index) || index < 0 || index >= state.logViewer.rawLines.length) {
+        hideMetaPortal();
+        return;
+      }
+      const rawLine = normalizeRawLine(state.logViewer.rawLines[index]);
+      const parsed = parseStructuredLogLine(rawLine);
+      renderMetaPortalContent(parsed, rawLine);
+      runLogMetaPortalEl.hidden = false;
+      state.logViewer.metaAnchorEl = dotEl;
+      positionMetaPortal(dotEl);
     }
 
     function renderLogRowsHtml(lines) {
@@ -194,7 +248,6 @@
           const parsed = parseStructuredLogLine(rawLine);
           const tone = levelTone(parsed?.level);
           const text = displayLogLine(parsed, rawLine);
-          const popover = renderMetaPopover(parsed, rawLine);
           const ariaLabel = parsed
             ? `Показать мета-данные строки ${index + 1}`
             : `Показать сырую строку ${index + 1}`;
@@ -202,8 +255,7 @@
           return `
             <div class="log-row log-tone-${tone}">
               <span class="log-meta-wrap">
-                <span class="log-meta-dot" tabindex="0" role="button" aria-label="${escapeHtml(ariaLabel)}"></span>
-                ${popover}
+                <span class="log-meta-dot" data-log-index="${index}" tabindex="0" role="button" aria-label="${escapeHtml(ariaLabel)}"></span>
               </span>
               <span class="log-line-text">${escapeHtml(text)}</span>
             </div>
@@ -215,10 +267,56 @@
     function renderLogOutput() {
       const stickToBottom = shouldStickToBottom(runLogOutputEl);
       const sourceLines = state.logViewer.rawLines;
+      hideMetaPortal();
       runLogOutputEl.innerHTML = sourceLines.length ? renderLogRowsHtml(sourceLines) : '';
       if (stickToBottom) {
         runLogOutputEl.scrollTop = runLogOutputEl.scrollHeight;
       }
+    }
+
+    function findMetaDot(target) {
+      return target instanceof Element ? target.closest('.log-meta-dot') : null;
+    }
+
+    function onLogOutputMouseOver(event) {
+      const dot = findMetaDot(event.target);
+      if (!dot) return;
+      showMetaPortalForDot(dot);
+    }
+
+    function onLogOutputMouseMove(event) {
+      const dot = findMetaDot(event.target);
+      if (!dot) return;
+      if (state.logViewer.metaAnchorEl !== dot) {
+        showMetaPortalForDot(dot);
+        return;
+      }
+      positionMetaPortal(dot);
+    }
+
+    function onLogOutputMouseOut(event) {
+      const dot = findMetaDot(event.target);
+      if (!dot) return;
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Element) {
+        if (nextTarget.closest('.log-meta-dot')) return;
+        if (nextTarget.closest('#run-log-meta-portal')) return;
+      }
+      hideMetaPortal();
+    }
+
+    function onLogOutputFocusIn(event) {
+      const dot = findMetaDot(event.target);
+      if (!dot) return;
+      showMetaPortalForDot(dot);
+    }
+
+    function onLogOutputFocusOut(event) {
+      const dot = findMetaDot(event.target);
+      if (!dot) return;
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Element && nextTarget.closest('#run-log-meta-portal')) return;
+      hideMetaPortal();
     }
 
     function replaceLogLines(lines) {
@@ -567,6 +665,16 @@
       if (!state.logViewer.runId) return;
       connectRunLog(state.logViewer.runId);
     });
+    runLogOutputEl.addEventListener('mouseover', onLogOutputMouseOver);
+    runLogOutputEl.addEventListener('mousemove', onLogOutputMouseMove);
+    runLogOutputEl.addEventListener('mouseout', onLogOutputMouseOut);
+    runLogOutputEl.addEventListener('focusin', onLogOutputFocusIn);
+    runLogOutputEl.addEventListener('focusout', onLogOutputFocusOut);
+    runLogOutputEl.addEventListener('scroll', hideMetaPortal);
+    if (runLogMetaPortalEl) {
+      runLogMetaPortalEl.addEventListener('mouseleave', hideMetaPortal);
+    }
+    window.addEventListener('resize', hideMetaPortal);
     if (runLogCompactEl) {
       runLogCompactEl.checked = state.logViewer.compactEnabled;
       runLogCompactEl.addEventListener('change', () => {

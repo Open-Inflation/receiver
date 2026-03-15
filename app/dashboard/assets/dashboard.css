@@ -526,9 +526,9 @@ td select {
   background: rgba(3, 6, 13, 0.95);
   color: #d9e8ff;
   font: 500 0.82rem/1.38 ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace;
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: anywhere;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
   tab-size: 2;
   -webkit-overflow-scrolling: touch;
 }
@@ -538,10 +538,11 @@ td select {
   align-items: flex-start;
   gap: 8px;
   padding: 2px 2px;
+  width: max-content;
+  min-width: 100%;
 }
 
 .log-meta-wrap {
-  position: relative;
   flex: 0 0 auto;
   padding-top: 2px;
 }
@@ -564,17 +565,18 @@ td select {
 
 .log-line-text {
   min-width: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
-.log-meta-popover {
+.log-meta-portal[hidden] {
   display: none;
-  position: absolute;
-  z-index: 6;
-  top: -8px;
-  left: 16px;
+}
+
+.log-meta-portal {
+  position: fixed;
+  z-index: 80;
   min-width: 280px;
   max-width: min(78vw, 560px);
   padding: 10px 12px;
@@ -582,11 +584,7 @@ td select {
   border: 1px solid rgba(126, 161, 232, 0.45);
   background: rgba(8, 13, 23, 0.97);
   box-shadow: 0 14px 28px rgba(0, 0, 0, 0.45);
-}
-
-.log-meta-wrap:hover .log-meta-popover,
-.log-meta-wrap:focus-within .log-meta-popover {
-  display: block;
+  pointer-events: auto;
 }
 
 .log-meta-title {
