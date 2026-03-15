@@ -108,12 +108,6 @@
       return (element.scrollHeight - element.scrollTop - element.clientHeight) < 24;
     }
 
-    function truncateText(value, maxLength = 96) {
-      const text = String(value ?? '');
-      if (text.length <= maxLength) return text;
-      return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
-    }
-
     function normalizeRawLine(value) {
       if (typeof value === 'string') return value;
       if (value == null) return '';
@@ -122,141 +116,106 @@
 
     function parseStructuredLogLine(line) {
       if (typeof line !== 'string') return null;
-      const firstSep = line.indexOf(' | ');
-      if (firstSep <= 0) return null;
-      const secondSep = line.indexOf(' | ', firstSep + 3);
-      if (secondSep <= firstSep) return null;
-      const lastSep = line.lastIndexOf(' | ');
-      if (lastSep <= secondSep) return null;
+      const parts = line.split(' | ');
+      if (parts.length < 4) return null;
 
-      const timestamp = line.slice(0, firstSep).trim();
-      const level = line.slice(firstSep + 3, secondSep).trim().toUpperCase();
-      const message = line.slice(lastSep + 3).trim();
-      const time = timestamp.length >= 19 ? timestamp.slice(11, 19) : timestamp;
-      return { timestamp, time, level, message };
-    }
+      const timestamp = parts[0].trim();
+      const level = parts[1].trim().toUpperCase();
+      const logger = parts[parts.length - 2].trim();
+      const message = parts[parts.length - 1].trim();
+      const metadata = [];
 
-    function compactScope(category, subcategory) {
-      const normalizedSubcategory = subcategory && subcategory !== 'None' ? subcategory : 'root';
-      return `${category}/${normalizedSubcategory}`;
-    }
-
-    function parseCollectingMessage(message) {
-      const match = /^Collecting products: category=(\S+) subcategory=(\S+) page=(\d+) limit=(\d+)$/.exec(message);
-      if (!match) return null;
-      return {
-        category: match[1],
-        subcategory: match[2],
-        page: Number(match[3]),
-        limit: Number(match[4]),
-      };
-    }
-
-    function parseCollectedMessage(message) {
-      const match = /^Collected products page: category=(\S+) subcategory=(\S+) page=(\d+) count=(\d+) enriched=(\d+)$/.exec(message);
-      if (!match) return null;
-      return {
-        category: match[1],
-        subcategory: match[2],
-        page: Number(match[3]),
-        count: Number(match[4]),
-        enriched: Number(match[5]),
-      };
-    }
-
-    function parseFailedProductInfoMessage(message) {
-      const match = /^Failed to collect FixPrice product info: category=(\S+) subcategory=(\S+) page=(\d+) url=(\S+) error=(.+)$/.exec(message);
-      if (!match) return null;
-      return {
-        category: match[1],
-        subcategory: match[2],
-        page: Number(match[3]),
-        url: match[4],
-        error: match[5],
-      };
-    }
-
-    function toCompactLogLines(rawLines) {
-      const compactLines = [];
-      let warningGroup = null;
-
-      function flushWarningGroup() {
-        if (!warningGroup) return;
-        const range = warningGroup.firstTime === warningGroup.lastTime
-          ? warningGroup.firstTime
-          : `${warningGroup.firstTime}-${warningGroup.lastTime}`;
-        const scope = compactScope(warningGroup.category, warningGroup.subcategory);
-        const sample = warningGroup.sampleUrl ? ` sample=${truncateText(warningGroup.sampleUrl, 72)}` : '';
-        compactLines.push(
-          `${range} WARN failed product info x${warningGroup.count} ${scope} page=${warningGroup.page} error=${truncateText(warningGroup.error)}${sample}`
-        );
-        warningGroup = null;
+      for (const segment of parts.slice(2, -2)) {
+        const value = segment.trim();
+        if (!value) continue;
+        const eqIndex = value.indexOf('=');
+        if (eqIndex > 0) {
+          metadata.push({
+            key: value.slice(0, eqIndex).trim(),
+            value: value.slice(eqIndex + 1).trim(),
+          });
+          continue;
+        }
+        metadata.push({ key: 'meta', value });
       }
 
-      for (const sourceLine of rawLines) {
-        const rawLine = normalizeRawLine(sourceLine);
-        const parsed = parseStructuredLogLine(rawLine);
-        if (!parsed) {
-          flushWarningGroup();
-          compactLines.push(rawLine);
-          continue;
-        }
+      return { timestamp, level, logger, message, metadata, raw: line };
+    }
 
-        const failed = parseFailedProductInfoMessage(parsed.message);
-        if (failed) {
-          const groupKey = `${failed.category}|${failed.subcategory}|${failed.page}|${failed.error}`;
-          if (warningGroup && warningGroup.key === groupKey) {
-            warningGroup.count += 1;
-            warningGroup.lastTime = parsed.time;
-          } else {
-            flushWarningGroup();
-            warningGroup = {
-              key: groupKey,
-              firstTime: parsed.time,
-              lastTime: parsed.time,
-              count: 1,
-              category: failed.category,
-              subcategory: failed.subcategory,
-              page: failed.page,
-              error: failed.error,
-              sampleUrl: failed.url,
-            };
-          }
-          continue;
-        }
+    function levelTone(level) {
+      const normalized = String(level || '').trim().toLowerCase();
+      if (normalized === 'debug') return 'debug';
+      if (normalized === 'warning' || normalized === 'warn') return 'warning';
+      if (normalized === 'error' || normalized === 'critical' || normalized === 'fatal') return 'error';
+      return 'info';
+    }
 
-        flushWarningGroup();
+    function displayLogLine(parsed, rawLine) {
+      if (!parsed) return rawLine;
+      if (!state.logViewer.compactEnabled) return rawLine;
+      return `${parsed.timestamp} | ${parsed.message}`;
+    }
 
-        const collecting = parseCollectingMessage(parsed.message);
-        if (collecting) {
-          compactLines.push(
-            `${parsed.time} INFO collecting ${compactScope(collecting.category, collecting.subcategory)} page=${collecting.page} limit=${collecting.limit}`
-          );
-          continue;
-        }
+    function renderMetaPopover(parsed, rawLine) {
+      const entries = parsed
+        ? [
+            { key: 'timestamp', value: parsed.timestamp },
+            { key: 'level', value: parsed.level },
+            { key: 'logger', value: parsed.logger },
+            ...parsed.metadata,
+            { key: 'message', value: parsed.message },
+          ]
+        : [{ key: 'raw', value: rawLine }];
 
-        const collected = parseCollectedMessage(parsed.message);
-        if (collected) {
-          compactLines.push(
-            `${parsed.time} INFO collected ${compactScope(collected.category, collected.subcategory)} page=${collected.page} count=${collected.count} enriched=${collected.enriched}`
-          );
-          continue;
-        }
+      const rowsHtml = entries
+        .map(
+          (entry) => `
+            <div class="log-meta-item">
+              <span class="log-meta-key">${escapeHtml(entry.key)}</span>
+              <span class="log-meta-value">${escapeHtml(entry.value)}</span>
+            </div>
+          `
+        )
+        .join('');
 
-        compactLines.push(`${parsed.time} ${parsed.level} ${parsed.message}`);
-      }
+      const title = parsed ? 'Распарсенные поля' : 'Сырая строка';
+      return `
+        <div class="log-meta-popover">
+          <div class="log-meta-title">${title}</div>
+          ${rowsHtml}
+        </div>
+      `;
+    }
 
-      flushWarningGroup();
-      return compactLines;
+    function renderLogRowsHtml(lines) {
+      return lines
+        .map((sourceLine, index) => {
+          const rawLine = normalizeRawLine(sourceLine);
+          const parsed = parseStructuredLogLine(rawLine);
+          const tone = levelTone(parsed?.level);
+          const text = displayLogLine(parsed, rawLine);
+          const popover = renderMetaPopover(parsed, rawLine);
+          const ariaLabel = parsed
+            ? `Показать мета-данные строки ${index + 1}`
+            : `Показать сырую строку ${index + 1}`;
+
+          return `
+            <div class="log-row log-tone-${tone}">
+              <span class="log-meta-wrap">
+                <span class="log-meta-dot" tabindex="0" role="button" aria-label="${escapeHtml(ariaLabel)}"></span>
+                ${popover}
+              </span>
+              <span class="log-line-text">${escapeHtml(text)}</span>
+            </div>
+          `;
+        })
+        .join('');
     }
 
     function renderLogOutput() {
       const stickToBottom = shouldStickToBottom(runLogOutputEl);
       const sourceLines = state.logViewer.rawLines;
-      const displayLines = state.logViewer.compactEnabled
-        ? toCompactLogLines(sourceLines)
-        : sourceLines;
-      runLogOutputEl.textContent = displayLines.length ? `${displayLines.join('\n')}\n` : '';
+      runLogOutputEl.innerHTML = sourceLines.length ? renderLogRowsHtml(sourceLines) : '';
       if (stickToBottom) {
         runLogOutputEl.scrollTop = runLogOutputEl.scrollHeight;
       }

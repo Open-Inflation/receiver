@@ -526,11 +526,126 @@ td select {
   background: rgba(3, 6, 13, 0.95);
   color: #d9e8ff;
   font: 500 0.82rem/1.38 ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace;
-  white-space: pre;
-  word-break: normal;
-  overflow-wrap: normal;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
   tab-size: 2;
   -webkit-overflow-scrolling: touch;
+}
+
+.log-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 2px;
+}
+
+.log-meta-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+
+.log-meta-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #7dc8ff;
+  border: 1px solid rgba(220, 233, 255, 0.56);
+  box-shadow: 0 0 0 1px rgba(9, 15, 29, 0.8) inset;
+  cursor: help;
+}
+
+.log-meta-dot:focus-visible {
+  outline: 2px solid rgba(154, 198, 255, 0.95);
+  outline-offset: 2px;
+}
+
+.log-line-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.log-meta-popover {
+  display: none;
+  position: absolute;
+  z-index: 6;
+  top: -8px;
+  left: 16px;
+  min-width: 280px;
+  max-width: min(78vw, 560px);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(126, 161, 232, 0.45);
+  background: rgba(8, 13, 23, 0.97);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.45);
+}
+
+.log-meta-wrap:hover .log-meta-popover,
+.log-meta-wrap:focus-within .log-meta-popover {
+  display: block;
+}
+
+.log-meta-title {
+  color: #c7dbff;
+  font: 600 0.74rem/1.25 "Space Grotesk", "IBM Plex Sans", sans-serif;
+  margin-bottom: 8px;
+}
+
+.log-meta-item {
+  display: grid;
+  grid-template-columns: minmax(80px, auto) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.log-meta-item + .log-meta-item {
+  margin-top: 4px;
+}
+
+.log-meta-key {
+  color: var(--muted);
+}
+
+.log-meta-value {
+  color: #d9e8ff;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.log-tone-debug .log-line-text {
+  color: #a9b7d2;
+}
+
+.log-tone-info .log-line-text {
+  color: #d9e8ff;
+}
+
+.log-tone-warning .log-line-text {
+  color: #ffd58a;
+}
+
+.log-tone-error .log-line-text {
+  color: #ff9da4;
+}
+
+.log-tone-debug .log-meta-dot {
+  background: #9badd0;
+}
+
+.log-tone-info .log-meta-dot {
+  background: #7dc8ff;
+}
+
+.log-tone-warning .log-meta-dot {
+  background: #ffbd53;
+}
+
+.log-tone-error .log-meta-dot {
+  background: #ff767f;
 }
 
 @media (max-width: 1240px) {
