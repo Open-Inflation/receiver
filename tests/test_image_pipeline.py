@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import app.services.image_pipeline as image_pipeline_module
 from app.services.image_pipeline import ImagePipeline
 
 
@@ -112,3 +113,72 @@ def test_process_archive_images_stops_after_max_files(tmp_path, monkeypatch):
     assert len(uploaded) == 2
     assert len(errors) == 1
     assert "limit exceeded" in str(errors[0]["error"]).lower()
+
+
+def test_upload_to_storage_uses_named_endpoint(monkeypatch):
+    pipeline = ImagePipeline(storage_base_url="http://storage.local", storage_api_token="token")
+    requests: list[str] = []
+
+    class _FakeResponse:
+        def __init__(self, status_code: int, *, headers: dict[str, str] | None = None):
+            self.status_code = status_code
+            self.headers = headers or {}
+            self.text = ""
+
+        def json(self):
+            return {}
+
+    class _FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, path: str, *, headers, files):
+            requests.append(path)
+            assert path.startswith("/api/images/")
+            assert path.endswith(".webp")
+            return _FakeResponse(201, headers={"location": "/images/uploaded.webp"})
+
+    monkeypatch.setattr(image_pipeline_module.httpx, "Client", lambda **kwargs: _FakeClient())
+
+    uploaded = pipeline._upload_to_storage(filename="main.jpg", image_bytes=b"img")
+
+    assert uploaded == "http://storage.local/images/uploaded.webp"
+    assert len(requests) == 1
+    assert requests[0].startswith("/api/images/")
+
+
+def test_upload_to_storage_named_conflict_returns_existing_url(monkeypatch):
+    pipeline = ImagePipeline(storage_base_url="http://storage.local", storage_api_token="token")
+    requests: list[str] = []
+
+    class _FakeResponse:
+        def __init__(self, status_code: int, *, headers: dict[str, str] | None = None):
+            self.status_code = status_code
+            self.headers = headers or {}
+            self.text = ""
+
+        def json(self):
+            return {}
+
+    class _FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, path: str, *, headers, files):
+            requests.append(path)
+            return _FakeResponse(409)
+
+    monkeypatch.setattr(image_pipeline_module.httpx, "Client", lambda **kwargs: _FakeClient())
+
+    image_bytes = b"same-image"
+    expected_name = pipeline._build_storage_image_name(filename="main.jpg", image_bytes=image_bytes)
+    uploaded = pipeline._upload_to_storage(filename="main.jpg", image_bytes=image_bytes)
+
+    assert uploaded == f"http://storage.local/images/{expected_name}"
+    assert requests == [f"/api/images/{expected_name}"]

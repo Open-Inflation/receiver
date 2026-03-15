@@ -50,7 +50,7 @@
   - PostgreSQL (alias): `postgresql://user:pass@127.0.0.1:5432/receiver`
   - SQLite (по умолчанию): `sqlite:///data/receiver.db`
 - `STORAGE_BASE_URL` - base URL storage-сервера (`http://127.0.0.1:8000`)
-- `STORAGE_API_TOKEN` - Bearer-токен для `POST /api/images` storage-сервера
+- `STORAGE_API_TOKEN` - Bearer-токен для `POST /api/images/{image_name}` storage-сервера
 - `PARSER_SRC_PATH` - путь к `../parser/src` для мягкой интеграции parser-модуля
 - `LEASE_TTL_MINUTES` - время аренды задачи оркестратором (по умолчанию `30`)
 - `ORCHESTRATOR_MAX_CLAIMS_PER_CYCLE` - максимум новых задач за один цикл bridge (по умолчанию `2`)

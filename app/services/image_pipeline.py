@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+import hashlib
 import logging
 import mimetypes
 import tarfile
@@ -293,17 +294,34 @@ class ImagePipeline:
         headers = {"Authorization": f"Bearer {self.storage_api_token}"}
         mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         files = {"file": (filename, image_bytes, mime_type)}
+        image_name = self._build_storage_image_name(filename=filename, image_bytes=image_bytes)
 
         with httpx.Client(
             base_url=self.storage_base_url,
             follow_redirects=False,
             timeout=self.timeout_seconds,
         ) as client:
-            response = client.post("/api/images", headers=headers, files=files)
+            response = client.post(f"/api/images/{image_name}", headers=headers, files=files)
+
+        if response.status_code == 409:
+            return urljoin(f"{self.storage_base_url}/", f"images/{image_name}")
 
         if response.status_code not in {200, 201, 302, 303}:
-            raise RuntimeError(f"Storage upload failed with status {response.status_code}")
+            raise RuntimeError(self._format_upload_error(response))
 
+        return self._extract_uploaded_url(response, fallback_path=f"/images/{image_name}")
+
+    def _build_storage_image_name(self, *, filename: str, image_bytes: bytes) -> str:
+        stem = Path(filename).stem.strip().lower() or "image"
+        safe_stem = "".join(ch if ("a" <= ch <= "z" or "0" <= ch <= "9") else "_" for ch in stem)
+        while "__" in safe_stem:
+            safe_stem = safe_stem.replace("__", "_")
+        safe_stem = safe_stem.strip("_") or "image"
+        safe_stem = safe_stem[:48]
+        payload_digest = hashlib.sha256(image_bytes).hexdigest()[:24]
+        return f"{safe_stem}_{payload_digest}.webp"
+
+    def _extract_uploaded_url(self, response: httpx.Response, *, fallback_path: str | None = None) -> str:
         location = response.headers.get("location")
         if location:
             return urljoin(f"{self.storage_base_url}/", location.lstrip("/"))
@@ -318,4 +336,24 @@ class ImagePipeline:
             except ValueError:
                 pass
 
+        if fallback_path is not None:
+            return urljoin(f"{self.storage_base_url}/", fallback_path.lstrip("/"))
+
         raise RuntimeError("Storage response does not include image URL")
+
+    @staticmethod
+    def _format_upload_error(response: httpx.Response) -> str:
+        detail = ""
+        content_type = response.headers.get("content-type", "")
+        if "application/json" in content_type.lower():
+            try:
+                body = response.json()
+                if isinstance(body, dict):
+                    detail = str(body.get("detail") or body.get("message") or "").strip()
+            except ValueError:
+                detail = ""
+        if not detail:
+            detail = response.text.strip()[:300]
+        if detail:
+            return f"Storage upload failed with status {response.status_code}: {detail}"
+        return f"Storage upload failed with status {response.status_code}"
