@@ -309,7 +309,7 @@ class ImagePipeline:
         if response.status_code not in {200, 201, 302, 303}:
             raise RuntimeError(self._format_upload_error(response))
 
-        return self._extract_uploaded_url(response, fallback_path=f"/images/{image_name}")
+        return self._extract_uploaded_url(response, fallback_path=f"FALLBACK://images/{image_name}")
 
     def _build_storage_image_name(self, *, filename: str, image_bytes: bytes) -> str:
         stem = Path(filename).stem.strip().lower() or "image"
