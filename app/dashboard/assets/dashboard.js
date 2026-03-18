@@ -6,6 +6,7 @@
         rows: [],
         selectedStoreCode: null,
         map: null,
+        mapRenderer: null,
         markersLayer: null,
         markerByCode: new Map(),
       },
@@ -17,6 +18,7 @@
         metaAnchorEl: null,
       },
     };
+    const STORE_MAP_MAX_MARKERS = 300;
 
     const metricsEl = document.getElementById('metrics');
     const taskBodyEl = document.getElementById('task-body');
@@ -167,9 +169,29 @@
       return Number.isFinite(lat) && Number.isFinite(lon);
     }
 
+    function isDigitsOnly(value) {
+      return /^\d+$/.test(String(value || '').trim());
+    }
+
+    function storeDirectoryCityDisplay(row) {
+      const cityName = String(row?.city_name || '').trim();
+      const cityAlias = String(row?.city_alias || '').trim();
+      return cityName || cityAlias || '';
+    }
+
+    function storeDirectoryTaskCityValue(row) {
+      const parserName = normalizeParserName(row?.parser_name);
+      const cityAlias = String(row?.city_alias || '').trim();
+      const cityName = String(row?.city_name || '').trim();
+      if (parserName === 'fixprice' && isDigitsOnly(cityAlias)) {
+        return cityAlias;
+      }
+      return cityAlias || cityName || '';
+    }
+
     function storeDirectoryDisplayTitle(row) {
       const code = String(row?.store_code || '').trim() || '—';
-      const city = String(row?.city_alias || row?.city_name || '').trim();
+      const city = storeDirectoryCityDisplay(row);
       if (city) return `${code} • ${city}`;
       return code;
     }
@@ -217,6 +239,7 @@
         attribution: '&copy; OpenStreetMap contributors',
       }).addTo(map);
       state.storeDirectory.map = map;
+      state.storeDirectory.mapRenderer = L.canvas({ padding: 0.3 });
       state.storeDirectory.markersLayer = L.layerGroup().addTo(map);
       return true;
     }
@@ -231,7 +254,7 @@
     function applyStoreSelection(row) {
       if (!createFormEl || !row) return;
       const parserName = normalizeParserName(row.parser_name || storeMapParserEl?.value);
-      const cityValue = String(row.city_alias || row.city_name || row.address || '').trim();
+      const cityValue = String(storeDirectoryTaskCityValue(row) || row.address || '').trim();
       const storeCode = String(row.store_code || '').trim();
       if (storeCode) {
         createFormEl.store.value = storeCode;
@@ -253,7 +276,7 @@
       storeMapListEl.innerHTML = rows.map((row) => {
         const hasCoords = hasStoreCoordinates(row);
         const address = String(row.address || '').trim() || 'адрес не указан';
-        const city = String(row.city_alias || row.city_name || '').trim() || 'город не указан';
+        const city = storeDirectoryCityDisplay(row) || 'город не указан';
         const partialLabel = row.is_partial ? 'частичные данные' : 'полные данные';
         return `
           <button type="button" class="store-map-item" data-store-code="${escapeHtml(row.store_code || '')}">
@@ -265,21 +288,65 @@
       }).join('');
     }
 
+    function _sampleStoreRowsForMap(rows) {
+      const withCoords = rows.filter((row) => hasStoreCoordinates(row));
+      if (withCoords.length <= STORE_MAP_MAX_MARKERS) {
+        return {
+          totalWithCoords: withCoords.length,
+          displayedRows: withCoords,
+          sampled: false,
+        };
+      }
+      const displayedRows = [];
+      const step = withCoords.length / STORE_MAP_MAX_MARKERS;
+      for (let index = 0; index < STORE_MAP_MAX_MARKERS; index += 1) {
+        const sourceIndex = Math.min(withCoords.length - 1, Math.floor(index * step));
+        displayedRows.push(withCoords[sourceIndex]);
+      }
+      return {
+        totalWithCoords: withCoords.length,
+        displayedRows,
+        sampled: true,
+      };
+    }
+
     function renderStoreMapMarkers(rows) {
       clearStoreMapMarkers();
-      if (!ensureStoreMap()) return;
+      if (!ensureStoreMap()) {
+        return {
+          leafletAvailable: false,
+          totalWithCoords: rows.filter((row) => hasStoreCoordinates(row)).length,
+          displayedCount: 0,
+          sampled: false,
+        };
+      }
       const map = state.storeDirectory.map;
       const markersLayer = state.storeDirectory.markersLayer;
+      const renderer = state.storeDirectory.mapRenderer;
       const L = window.L;
-      if (!map || !markersLayer || !L) return;
+      if (!map || !markersLayer || !L) {
+        return {
+          leafletAvailable: false,
+          totalWithCoords: rows.filter((row) => hasStoreCoordinates(row)).length,
+          displayedCount: 0,
+          sampled: false,
+        };
+      }
 
+      const sampled = _sampleStoreRowsForMap(rows);
       const bounds = [];
-      rows.forEach((row) => {
-        if (!hasStoreCoordinates(row)) return;
+      sampled.displayedRows.forEach((row) => {
         const lat = Number(row.latitude);
         const lon = Number(row.longitude);
-        const marker = L.marker([lat, lon], {
+        const marker = L.circleMarker([lat, lon], {
           title: storeDirectoryDisplayTitle(row),
+          renderer,
+          radius: 4,
+          weight: 1,
+          opacity: 0.95,
+          color: '#4ecfff',
+          fillColor: '#4ecfff',
+          fillOpacity: 0.65,
         });
         marker.on('click', () => applyStoreSelection(row));
         marker.addTo(markersLayer);
@@ -293,6 +360,12 @@
         map.fitBounds(bounds, { padding: [24, 24] });
       }
       map.invalidateSize();
+      return {
+        leafletAvailable: true,
+        totalWithCoords: sampled.totalWithCoords,
+        displayedCount: sampled.displayedRows.length,
+        sampled: sampled.sampled,
+      };
     }
 
     function filteredStoreRows() {
@@ -313,16 +386,22 @@
     function renderStoreDirectory() {
       const rows = filteredStoreRows();
       renderStoreMapList(rows);
-      renderStoreMapMarkers(rows);
+      const mapInfo = renderStoreMapMarkers(rows);
       const withCoords = rows.filter((row) => hasStoreCoordinates(row)).length;
       const partial = rows.filter((row) => !!row.is_partial).length;
       const summary = `Магазинов: ${rows.length} • с координатами: ${withCoords} • partial: ${partial}`;
-      const leafletAvailable = !!(window.L && typeof window.L.map === 'function');
-      if (leafletAvailable) {
-        setStoreMapStatus(summary, 'info');
-      } else {
+      if (!mapInfo.leafletAvailable) {
         setStoreMapStatus(`${summary} • Leaflet недоступен, работает list-only режим.`, 'warning');
+        return;
       }
+      if (mapInfo.sampled) {
+        setStoreMapStatus(
+          `${summary} • на карте показано ${mapInfo.displayedCount}/${mapInfo.totalWithCoords} (для скорости). Уточните поиск для детального выбора.`,
+          'warning'
+        );
+        return;
+      }
+      setStoreMapStatus(summary, 'info');
     }
 
     async function loadStoreDirectory(parserName, { showErrorToast = true } = {}) {
