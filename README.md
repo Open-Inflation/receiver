@@ -97,7 +97,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8090
 - просмотра последних запусков;
 - отдельной страницы ошибок валидации, подлежащих устранению (`/validation-errors`).
 
-Важно: дашборд не управляет `last_crawl_at`; это поле обновляет основной скрипт при сохранении результатов обхода.
+Важно: дашборд умеет принудительно сбрасывать `last_crawl_at` в текущее время через
+`POST /api/tasks/{task_id}/reset-last-crawl` (как будто run завершился только что).
 
 Запуск:
 
@@ -124,6 +125,8 @@ python dashboard.py --host 127.0.0.1 --port 8091
 - `POST /api/tasks` - создать задачу
 - `GET /api/tasks` - список задач
 - `PATCH /api/tasks/{task_id}` - обновить задачу
+- `POST /api/tasks/{task_id}/force-run` - принудительно создать и отправить `assigned` run в parser WS
+- `POST /api/tasks/{task_id}/reset-last-crawl` - выставить `last_crawl_at=now` для задачи
 - `GET /api/validation-errors` - список актуальных ошибок dataclass validation (dashboard; по последнему успешному run каждой задачи)
 - `GET /api/runs/{run_id}` - получить run
 - `POST /api/runs/{run_id}/cancel` - остановить активный run из dashboard (проксируется в parser `cancel_job`)

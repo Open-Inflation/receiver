@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import timedelta
 import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import func, select
@@ -12,8 +14,14 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import CrawlTask, Orchestrator, TaskRun
-from app.services.scheduler import TERMINAL_RUN_STATUSES, finish_run
-from app.services.scheduler import as_utc, is_task_due, utcnow
+from app.services.scheduler import (
+    TERMINAL_RUN_STATUSES,
+    as_utc,
+    create_or_get_orchestrator,
+    finish_run,
+    is_task_due,
+    utcnow,
+)
 
 from .schemas import TaskCreateIn, TaskUpdateIn
 from .utils import dispatch_meta, task_to_dict
@@ -32,6 +40,30 @@ def create_dashboard_router(
     connect_orchestrator_ws_getter: OrchestratorWsConnectorGetter,
 ) -> APIRouter:
     router = APIRouter()
+
+    async def _orchestrator_ws_call(payload: dict[str, Any]) -> dict[str, Any]:
+        parser_socket: Any | None = None
+        try:
+            connector = connect_orchestrator_ws_getter()
+            parser_socket = await connector(app_settings.orchestrator_ws_url)
+            request_payload = dict(payload)
+            if app_settings.orchestrator_ws_password is not None:
+                request_payload["password"] = app_settings.orchestrator_ws_password
+            await parser_socket.send(json.dumps(request_payload, ensure_ascii=False))
+            raw_payload = await parser_socket.recv()
+            raw_text = (
+                raw_payload.decode("utf-8", errors="replace")
+                if isinstance(raw_payload, (bytes, bytearray))
+                else str(raw_payload)
+            )
+            parsed_payload = json.loads(raw_text)
+            if not isinstance(parsed_payload, dict):
+                raise RuntimeError("Orchestrator returned unexpected payload format")
+            return parsed_payload
+        finally:
+            if parser_socket is not None:
+                with contextlib.suppress(Exception):
+                    await parser_socket.close()
 
     @router.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -147,6 +179,138 @@ def create_dashboard_router(
         finally:
             session.close()
 
+    @router.post("/api/tasks/{task_id}/reset-last-crawl")
+    def reset_task_last_crawl(task_id: int) -> dict[str, object]:
+        session = session_factory()
+        try:
+            task = session.get(CrawlTask, task_id)
+            if task is None or task.deleted_at is not None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+            now = utcnow()
+            task.last_crawl_at = now
+            task.updated_at = now
+            session.commit()
+            session.refresh(task)
+            LOGGER.info("Dashboard task last_crawl reset: id=%s at=%s", task.id, now.isoformat())
+            return task_to_dict(task, now=now)
+        finally:
+            session.close()
+
+    @router.post("/api/tasks/{task_id}/force-run")
+    async def force_run_task(task_id: int) -> dict[str, object]:
+        session = session_factory()
+        try:
+            task = session.get(CrawlTask, task_id)
+            if task is None or task.deleted_at is not None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+            has_assigned_run = session.scalar(
+                select(func.count(TaskRun.id)).where(
+                    TaskRun.task_id == task.id,
+                    TaskRun.status == "assigned",
+                )
+            )
+            if int(has_assigned_run or 0) > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Task already has assigned run",
+                )
+
+            orchestrator = create_or_get_orchestrator(session, name=app_settings.orchestrator_manager_name)
+            now = utcnow()
+            run = TaskRun(
+                id=uuid4().hex,
+                task_id=task.id,
+                orchestrator_id=orchestrator.id,
+                status="assigned",
+                assigned_at=now,
+            )
+            task.lease_owner_id = orchestrator.id
+            task.lease_until = now + timedelta(minutes=max(1, int(app_settings.lease_ttl_minutes)))
+            task.updated_at = now
+            session.add(run)
+            session.commit()
+            session.refresh(run)
+
+            request_payload: dict[str, Any] = {
+                "action": "submit_store",
+                "store_code": task.store,
+                "parser": task.parser_name,
+                "include_images": bool(task.include_images),
+                "use_product_info": bool(task.use_product_info),
+                "full_catalog": bool(app_settings.orchestrator_submit_full_catalog),
+            }
+            city_token = task.city.strip()
+            if city_token:
+                try:
+                    request_payload["city_id"] = int(city_token)
+                except ValueError:
+                    request_payload["city_id"] = city_token
+            run_id = run.id
+            orchestrator_id = orchestrator.id
+        finally:
+            session.close()
+
+        remote_response: dict[str, Any]
+        try:
+            remote_response = await _orchestrator_ws_call(request_payload)
+        except Exception as exc:
+            remote_response = {"ok": False, "error": str(exc)}
+
+        session = session_factory()
+        try:
+            run = session.get(TaskRun, run_id)
+            orchestrator = session.get(Orchestrator, orchestrator_id)
+            if run is None or orchestrator is None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Run/orchestrator not found")
+
+            if remote_response.get("ok") and isinstance(remote_response.get("job_id"), str):
+                run.dispatch_meta_json = {
+                    "submitted_at": utcnow().isoformat(),
+                    "remote_job_id": str(remote_response.get("job_id")),
+                    "remote_status": remote_response.get("status"),
+                    "request": dict(request_payload),
+                    "response": remote_response,
+                }
+                session.commit()
+                session.refresh(run)
+                LOGGER.info(
+                    "Force-run submitted: task_id=%s run_id=%s remote_job_id=%s",
+                    task_id,
+                    run.id,
+                    remote_response.get("job_id"),
+                )
+                return {
+                    "ok": True,
+                    "task_id": task_id,
+                    "run_id": run.id,
+                    "remote_job_id": str(remote_response.get("job_id")),
+                    "status": "submitted",
+                }
+
+            submit_error = str(remote_response.get("error", "submit_store failed"))
+            run.dispatch_meta_json = {
+                "submit_error": submit_error,
+                "last_submit_attempt_at": utcnow().isoformat(),
+                "request": dict(request_payload),
+                "response": remote_response,
+            }
+            finish_run(
+                session,
+                run=run,
+                orchestrator=orchestrator,
+                status="error",
+                processed_images=int(run.processed_images or 0),
+                error_message=f"Submit failed: {submit_error}",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Submit failed: {submit_error}",
+            )
+        finally:
+            session.close()
+
     @router.websocket("/ws/runs/{run_id}/log")
     async def stream_run_log(
         websocket: WebSocket,
@@ -190,7 +354,7 @@ def create_dashboard_router(
 
             connector = connect_orchestrator_ws_getter()
             parser_socket = await connector(app_settings.orchestrator_ws_url)
-            request_payload: dict[str, Any] = {
+            request_payload = {
                 "action": "stream_job_log",
                 "job_id": remote_job_id.strip(),
                 "tail_lines": int(tail),
@@ -271,25 +435,13 @@ def create_dashboard_router(
         cancel_response: dict[str, Any]
         try:
             connector = connect_orchestrator_ws_getter()
-            parser_socket = await connector(app_settings.orchestrator_ws_url)
-            request_payload: dict[str, Any] = {
-                "action": "cancel_job",
-                "job_id": remote_job_id,
-            }
-            if app_settings.orchestrator_ws_password is not None:
-                request_payload["password"] = app_settings.orchestrator_ws_password
-            await parser_socket.send(json.dumps(request_payload, ensure_ascii=False))
-
-            raw_payload = await parser_socket.recv()
-            raw_text = (
-                raw_payload.decode("utf-8", errors="replace")
-                if isinstance(raw_payload, (bytes, bytearray))
-                else str(raw_payload)
+            del connector
+            cancel_response = await _orchestrator_ws_call(
+                {
+                    "action": "cancel_job",
+                    "job_id": remote_job_id,
+                }
             )
-            parsed_payload = json.loads(raw_text)
-            if not isinstance(parsed_payload, dict):
-                raise RuntimeError("Orchestrator returned unexpected payload format")
-            cancel_response = parsed_payload
         except HTTPException:
             raise
         except Exception as exc:
@@ -298,10 +450,6 @@ def create_dashboard_router(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Cancel request failed: {exc}",
             ) from exc
-        finally:
-            if parser_socket is not None:
-                with contextlib.suppress(Exception):
-                    await parser_socket.close()
 
         if cancel_response.get("ok") is not True:
             raise HTTPException(

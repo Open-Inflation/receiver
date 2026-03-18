@@ -152,7 +152,7 @@ body {
 .task-create {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   align-items: end;
 }
 
@@ -321,7 +321,7 @@ th:nth-child(6), td:nth-child(6) { width: 102px; }
 th:nth-child(7), td:nth-child(7) { width: 84px; }
 th:nth-child(8), td:nth-child(8) { width: 132px; }
 th:nth-child(9), td:nth-child(9) { width: 146px; }
-th:nth-child(10), td:nth-child(10) { width: 110px; }
+th:nth-child(10), td:nth-child(10) { width: 220px; }
 
 td input:not([type="checkbox"]),
 td select {
@@ -334,6 +334,20 @@ td select {
 td input[type="checkbox"] {
   width: 18px;
   height: 18px;
+}
+
+.task-actions {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.task-actions button {
+  width: 100%;
+  padding: 7px 8px;
+  font-size: 0.74rem;
+  line-height: 1.15;
+  text-align: center;
 }
 
 .status {
@@ -716,15 +730,11 @@ td input[type="checkbox"] {
   background: #ff767f;
 }
 
-@media (max-width: 1240px) {
-  .task-create { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
 @media (max-width: 900px) {
   .tasks-wrap { max-height: 54vh; }
   .runs, .orch-list { max-height: 38vh; }
   .panel { padding: 12px; }
-  .task-create { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .task-create { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 @media (max-width: 1080px) {
@@ -737,7 +747,7 @@ td input[type="checkbox"] {
   .hero h1 { font-size: 1.5rem; }
   .hero p { font-size: 0.92rem; }
   .grid-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .task-create { grid-template-columns: 1fr; }
+  .task-create { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .layout { padding: 20px 12px 40px; }
   .panel h2 { font-size: 0.98rem; }
   .log-shell {

@@ -473,8 +473,10 @@
               </label>
             </td>
             <td>
-              <div class="toolbar">
+              <div class="toolbar task-actions">
                 <button data-action="save" data-id="${task.id}">Сохранить</button>
+                <button data-action="force-run" data-id="${task.id}" class="soft">Принудительный запуск</button>
+                <button data-action="reset-last-crawl" data-id="${task.id}" class="ghost">Сброс времени рана</button>
                 <button data-action="delete" data-id="${task.id}" class="danger">Удалить</button>
               </div>
             </td>
@@ -609,6 +611,30 @@
       const row = button.closest('tr[data-id]');
       if (!row) return;
       const taskId = row.dataset.id;
+
+      if (button.dataset.action === 'force-run') {
+        try {
+          const response = await api(`/api/tasks/${taskId}/force-run`, { method: 'POST' });
+          const runId = typeof response.run_id === 'string' ? response.run_id : '';
+          const runLabel = runId ? `run ${runId.slice(0, 12)}` : 'run';
+          flash(`Задача #${taskId}: ${runLabel} запущен`);
+          await refreshAll();
+        } catch (err) {
+          flash(`Ошибка принудительного запуска: ${err.message}`, true);
+        }
+        return;
+      }
+
+      if (button.dataset.action === 'reset-last-crawl') {
+        try {
+          await api(`/api/tasks/${taskId}/reset-last-crawl`, { method: 'POST' });
+          flash(`Задача #${taskId}: время run сброшено`);
+          await refreshAll();
+        } catch (err) {
+          flash(`Ошибка сброса времени run: ${err.message}`, true);
+        }
+        return;
+      }
 
       if (button.dataset.action === 'save') {
         const getValue = (field) => row.querySelector(`[data-field="${field}"]`);

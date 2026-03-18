@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 import json
 from pathlib import Path
 
@@ -257,6 +258,32 @@ class _FakeCancelSocket:
         self.closed = True
 
 
+class _FakeForceRunSocket:
+    def __init__(self) -> None:
+        self.closed = False
+        self.sent_payloads: list[str] = []
+        self._responses = [
+            json.dumps(
+                {
+                    "ok": True,
+                    "action": "submit_store",
+                    "job_id": "job-force-901",
+                    "status": "running",
+                }
+            )
+        ]
+
+    async def send(self, payload: str) -> None:
+        self.sent_payloads.append(payload)
+
+    async def recv(self) -> str:
+        assert self._responses, "No fake force-run payloads left"
+        return self._responses.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
     app = create_dashboard_app(_settings(tmp_path, ws_password="top-secret"))
     fake_socket = _FakeParserSocket()
@@ -447,6 +474,119 @@ def test_dashboard_cancel_run_requires_remote_job_link(tmp_path: Path):
     with TestClient(app) as client:
         cancel = client.post("/api/runs/" + ("n" * 32) + "/cancel")
         assert cancel.status_code == 409
+
+
+def test_dashboard_force_run_submits_and_creates_assigned_run(tmp_path: Path, monkeypatch):
+    app = create_dashboard_app(_settings(tmp_path, ws_password="top-secret"))
+    fake_socket = _FakeForceRunSocket()
+
+    async def _fake_connect_orchestrator_ws(url: str):
+        assert url == "ws://127.0.0.1:8765"
+        return fake_socket
+
+    monkeypatch.setattr("app.dashboard_app._connect_orchestrator_ws", _fake_connect_orchestrator_ws)
+
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        task = CrawlTask(
+            city="Moscow",
+            store="C991",
+            frequency_hours=24,
+            parser_name="chizhik",
+            include_images=False,
+            use_product_info=False,
+            is_active=False,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+        task_id = task.id
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        force_run = client.post(f"/api/tasks/{task_id}/force-run")
+        assert force_run.status_code == 200
+        force_body = force_run.json()
+        assert force_body["ok"] is True
+        assert force_body["task_id"] == task_id
+        assert force_body["status"] == "submitted"
+        assert force_body["remote_job_id"] == "job-force-901"
+        run_id = force_body["run_id"]
+
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        recent = overview.json()["recent_runs"][0]
+        assert recent["id"] == run_id
+        assert recent["task_id"] == task_id
+        assert recent["status"] == "assigned"
+        assert recent["display_status"] == "assigned"
+        assert recent["remote_status"] == "running"
+        assert recent["remote_terminal"] is False
+        assert recent["can_open_live_log"] is True
+
+    sent_payload = json.loads(fake_socket.sent_payloads[0])
+    assert sent_payload["action"] == "submit_store"
+    assert sent_payload["store_code"] == "C991"
+    assert sent_payload["parser"] == "chizhik"
+    assert sent_payload["city_id"] == "Moscow"
+    assert sent_payload["include_images"] is False
+    assert sent_payload["use_product_info"] is False
+    assert sent_payload["full_catalog"] is True
+    assert sent_payload["password"] == "top-secret"
+    assert fake_socket.closed is True
+
+
+def test_dashboard_reset_last_crawl_sets_now(tmp_path: Path):
+    app = create_dashboard_app(_settings(tmp_path))
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        task = CrawlTask(
+            city="Moscow",
+            store="C992",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            last_crawl_at=now - timedelta(days=3),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+        task_id = task.id
+        previous_last_crawl_at = task.last_crawl_at
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        reset = client.post(f"/api/tasks/{task_id}/reset-last-crawl")
+        assert reset.status_code == 200
+        reset_body = reset.json()
+        assert reset_body["id"] == task_id
+        assert reset_body["last_crawl_at"] is not None
+        assert reset_body["is_due"] is False
+
+        tasks = client.get("/api/tasks")
+        assert tasks.status_code == 200
+        listed = tasks.json()[0]
+        assert listed["id"] == task_id
+        assert listed["last_crawl_at"] is not None
+        assert listed["is_due"] is False
+
+    session = app.state.session_factory()
+    try:
+        task = session.get(CrawlTask, task_id)
+        assert task is not None
+        assert task.last_crawl_at is not None
+        assert previous_last_crawl_at is not None
+        assert task.last_crawl_at > previous_last_crawl_at
+    finally:
+        session.close()
 
 
 def test_dashboard_overview_remote_terminal_disables_live_log(tmp_path: Path):
