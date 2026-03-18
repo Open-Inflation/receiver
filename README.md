@@ -20,6 +20,7 @@
 - `last_crawl_at`
 - `frequency_hours`
 - `include_images` - запрашивать изображения карточек в `submit_store`
+- `use_product_info` - включать обогащение карточек через `Catalog.Product.info` (fixprice/chizhik)
 
 Дополнительно есть служебные поля lease/статуса для безопасной выдачи задач нескольким оркестраторам.
 
@@ -62,6 +63,7 @@
 - `ORCHESTRATOR_POLL_INTERVAL_SEC` - интервал poll статуса задач (по умолчанию `5`)
 - `ORCHESTRATOR_MANAGER_NAME` - имя внутреннего оркестратора в БД receiver (по умолчанию `parser-ws`)
 - `ORCHESTRATOR_SUBMIT_INCLUDE_IMAGES` - дефолт `include_images` для новых задач (если в API/dashboard явно не задано)
+- `ORCHESTRATOR_SUBMIT_USE_PRODUCT_INFO` - дефолт `use_product_info` для новых задач (если в API/dashboard явно не задано)
 - `ORCHESTRATOR_UPLOAD_ARCHIVE_IMAGES` - после `success` загружать изображения из `output_gz` в storage (`true` по умолчанию)
 - `ARTIFACT_DOWNLOAD_MAX_BYTES` - лимит размера скачиваемого артефакта по `download_url` (по умолчанию `268435456`)
 - `ARTIFACT_JSON_MEMBER_MAX_BYTES` - лимит размера JSON файла внутри артефакта/`output_json` (по умолчанию `16777216`)
@@ -90,7 +92,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8090
 
 Есть отдельный исполняемый Python-скрипт `dashboard.py`.
 Это отдельное web-приложение для:
-- управления задачами (`create/update active/frequency/parser/include_images`);
+- управления задачами (`create/update active/frequency/parser/include_images/use_product_info`);
 - просмотра общей статистики (`tasks/runs/orchestrators`);
 - просмотра последних запусков;
 - отдельной страницы ошибок валидации, подлежащих устранению (`/validation-errors`).

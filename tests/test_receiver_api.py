@@ -65,6 +65,7 @@ def test_task_lifecycle_success(client):
     assert tasks.status_code == 200
     stored_task = tasks.json()[0]
     assert stored_task["include_images"] is True
+    assert stored_task["use_product_info"] is True
     assert stored_task["last_crawl_at"] is not None
     assert stored_task["lease_owner_id"] is None
 
@@ -115,6 +116,30 @@ def test_task_include_images_roundtrip(client):
     )
     assert update_task.status_code == 200
     assert update_task.json()["include_images"] is True
+
+
+def test_task_use_product_info_roundtrip(client):
+    create_task = client.post(
+        "/api/tasks",
+        json={
+            "city": "Moscow",
+            "store": "INFO100",
+            "frequency_hours": 24,
+            "use_product_info": False,
+        },
+    )
+    assert create_task.status_code == 201
+    assert create_task.json()["use_product_info"] is False
+
+    task_id = create_task.json()["id"]
+    update_task = client.patch(
+        f"/api/tasks/{task_id}",
+        json={
+            "use_product_info": True,
+        },
+    )
+    assert update_task.status_code == 200
+    assert update_task.json()["use_product_info"] is True
 
 
 def test_delete_task_removes_it_from_list(client):

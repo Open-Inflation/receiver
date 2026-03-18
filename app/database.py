@@ -114,50 +114,70 @@ def create_session_factory(engine) -> sessionmaker[Session]:
 
 def ensure_task_runs_runtime_columns(engine) -> None:
     inspector = inspect(engine)
-    if not inspector.has_table("task_runs"):
-        return
-
-    existing_columns = {str(item.get("name")) for item in inspector.get_columns("task_runs")}
     dialect = engine.dialect.name
-    if dialect == "postgresql":
-        ddl = {
-            "converter_elapsed_sec": "ALTER TABLE task_runs ADD COLUMN converter_elapsed_sec BIGINT DEFAULT 0",
-            "finish": "ALTER TABLE task_runs ADD COLUMN finish TIMESTAMPTZ",
-            "artifact_source": "ALTER TABLE task_runs ADD COLUMN artifact_source VARCHAR(32)",
-            "artifact_products_count": "ALTER TABLE task_runs ADD COLUMN artifact_products_count BIGINT DEFAULT 0",
-            "artifact_categories_count": "ALTER TABLE task_runs ADD COLUMN artifact_categories_count BIGINT DEFAULT 0",
-            "artifact_dataclass_validated": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validated BOOLEAN",
-            "artifact_dataclass_validation_error": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validation_error TEXT",
-            "artifact_ingested_at": "ALTER TABLE task_runs ADD COLUMN artifact_ingested_at TIMESTAMPTZ",
-        }
-    else:
-        ddl = {
-            "converter_elapsed_sec": "ALTER TABLE task_runs ADD COLUMN converter_elapsed_sec INTEGER DEFAULT 0",
-            "finish": "ALTER TABLE task_runs ADD COLUMN finish TEXT",
-            "artifact_source": "ALTER TABLE task_runs ADD COLUMN artifact_source TEXT",
-            "artifact_products_count": "ALTER TABLE task_runs ADD COLUMN artifact_products_count INTEGER DEFAULT 0",
-            "artifact_categories_count": "ALTER TABLE task_runs ADD COLUMN artifact_categories_count INTEGER DEFAULT 0",
-            "artifact_dataclass_validated": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validated INTEGER",
-            "artifact_dataclass_validation_error": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validation_error TEXT",
-            "artifact_ingested_at": "ALTER TABLE task_runs ADD COLUMN artifact_ingested_at TEXT",
-        }
+    executed_task_runs = 0
+    executed_crawl_tasks = 0
 
-    executed = 0
     with engine.begin() as connection:
-        for column_name, statement in ddl.items():
-            if column_name in existing_columns:
-                continue
-            connection.execute(text(statement))
-            executed += 1
+        if inspector.has_table("task_runs"):
+            existing_task_run_columns = {str(item.get("name")) for item in inspector.get_columns("task_runs")}
+            if dialect == "postgresql":
+                task_runs_ddl = {
+                    "converter_elapsed_sec": "ALTER TABLE task_runs ADD COLUMN converter_elapsed_sec BIGINT DEFAULT 0",
+                    "finish": "ALTER TABLE task_runs ADD COLUMN finish TIMESTAMPTZ",
+                    "artifact_source": "ALTER TABLE task_runs ADD COLUMN artifact_source VARCHAR(32)",
+                    "artifact_products_count": "ALTER TABLE task_runs ADD COLUMN artifact_products_count BIGINT DEFAULT 0",
+                    "artifact_categories_count": "ALTER TABLE task_runs ADD COLUMN artifact_categories_count BIGINT DEFAULT 0",
+                    "artifact_dataclass_validated": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validated BOOLEAN",
+                    "artifact_dataclass_validation_error": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validation_error TEXT",
+                    "artifact_ingested_at": "ALTER TABLE task_runs ADD COLUMN artifact_ingested_at TIMESTAMPTZ",
+                }
+            else:
+                task_runs_ddl = {
+                    "converter_elapsed_sec": "ALTER TABLE task_runs ADD COLUMN converter_elapsed_sec INTEGER DEFAULT 0",
+                    "finish": "ALTER TABLE task_runs ADD COLUMN finish TEXT",
+                    "artifact_source": "ALTER TABLE task_runs ADD COLUMN artifact_source TEXT",
+                    "artifact_products_count": "ALTER TABLE task_runs ADD COLUMN artifact_products_count INTEGER DEFAULT 0",
+                    "artifact_categories_count": "ALTER TABLE task_runs ADD COLUMN artifact_categories_count INTEGER DEFAULT 0",
+                    "artifact_dataclass_validated": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validated INTEGER",
+                    "artifact_dataclass_validation_error": "ALTER TABLE task_runs ADD COLUMN artifact_dataclass_validation_error TEXT",
+                    "artifact_ingested_at": "ALTER TABLE task_runs ADD COLUMN artifact_ingested_at TEXT",
+                }
 
-        connection.execute(
-            text(
-                "UPDATE task_runs "
-                "SET converter_elapsed_sec = COALESCE(converter_elapsed_sec, 0), "
-                "artifact_products_count = COALESCE(artifact_products_count, 0), "
-                "artifact_categories_count = COALESCE(artifact_categories_count, 0)"
+            for column_name, statement in task_runs_ddl.items():
+                if column_name in existing_task_run_columns:
+                    continue
+                connection.execute(text(statement))
+                executed_task_runs += 1
+
+            connection.execute(
+                text(
+                    "UPDATE task_runs "
+                    "SET converter_elapsed_sec = COALESCE(converter_elapsed_sec, 0), "
+                    "artifact_products_count = COALESCE(artifact_products_count, 0), "
+                    "artifact_categories_count = COALESCE(artifact_categories_count, 0)"
+                )
             )
-        )
 
-    if executed:
-        LOGGER.info("Receiver runtime schema reconciled for task_runs: added_columns=%s", executed)
+        if inspector.has_table("crawl_tasks"):
+            existing_task_columns = {str(item.get("name")) for item in inspector.get_columns("crawl_tasks")}
+            if "use_product_info" not in existing_task_columns:
+                if dialect == "postgresql":
+                    connection.execute(
+                        text("ALTER TABLE crawl_tasks ADD COLUMN use_product_info BOOLEAN DEFAULT TRUE")
+                    )
+                else:
+                    connection.execute(
+                        text("ALTER TABLE crawl_tasks ADD COLUMN use_product_info INTEGER DEFAULT 1")
+                    )
+                executed_crawl_tasks += 1
+
+            bool_default = "TRUE" if dialect == "postgresql" else "1"
+            connection.execute(
+                text(f"UPDATE crawl_tasks SET use_product_info = COALESCE(use_product_info, {bool_default})")
+            )
+
+    if executed_task_runs:
+        LOGGER.info("Receiver runtime schema reconciled for task_runs: added_columns=%s", executed_task_runs)
+    if executed_crawl_tasks:
+        LOGGER.info("Receiver runtime schema reconciled for crawl_tasks: added_columns=%s", executed_crawl_tasks)

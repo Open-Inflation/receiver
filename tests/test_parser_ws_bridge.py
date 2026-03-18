@@ -89,6 +89,7 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
             frequency_hours=24,
             parser_name="fixprice",
             include_images=False,
+            use_product_info=False,
             is_active=True,
             created_at=utcnow(),
             updated_at=utcnow(),
@@ -170,6 +171,7 @@ async def _run_bridge_cycle_test(database_url: str) -> None:
     assert ws_requests[1]["action"] == "submit_store"
     assert ws_requests[1]["full_catalog"] is True
     assert ws_requests[1]["include_images"] is False
+    assert ws_requests[1]["use_product_info"] is False
 
 
 def test_parser_ws_bridge_cycle(tmp_path):

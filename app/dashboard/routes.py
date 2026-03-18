@@ -59,12 +59,18 @@ def create_dashboard_router(
                 if payload.include_images is None
                 else payload.include_images
             )
+            use_product_info = (
+                app_settings.orchestrator_submit_use_product_info
+                if payload.use_product_info is None
+                else payload.use_product_info
+            )
             task = CrawlTask(
                 city=payload.city.strip(),
                 store=payload.store.strip(),
                 frequency_hours=payload.frequency_hours,
                 parser_name=payload.parser_name.strip(),
                 include_images=include_images,
+                use_product_info=use_product_info,
                 is_active=payload.is_active,
                 created_at=now,
                 updated_at=now,
@@ -73,12 +79,13 @@ def create_dashboard_router(
             session.commit()
             session.refresh(task)
             LOGGER.info(
-                "Dashboard task created: id=%s city=%s store=%s parser=%s include_images=%s active=%s",
+                "Dashboard task created: id=%s city=%s store=%s parser=%s include_images=%s use_product_info=%s active=%s",
                 task.id,
                 task.city,
                 task.store,
                 task.parser_name,
                 task.include_images,
+                task.use_product_info,
                 task.is_active,
             )
             return task_to_dict(task, now=now)
@@ -106,10 +113,11 @@ def create_dashboard_router(
             session.commit()
             session.refresh(task)
             LOGGER.info(
-                "Dashboard task updated: id=%s active=%s include_images=%s frequency_hours=%s parser=%s",
+                "Dashboard task updated: id=%s active=%s include_images=%s use_product_info=%s frequency_hours=%s parser=%s",
                 task.id,
                 task.is_active,
                 task.include_images,
+                task.use_product_info,
                 task.frequency_hours,
                 task.parser_name,
             )

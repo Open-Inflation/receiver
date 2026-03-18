@@ -163,7 +163,7 @@ body {
   min-width: 0;
 }
 
-.task-create input,
+.task-create input:not([type="checkbox"]),
 .task-create select,
 .task-create button {
   width: 100%;
@@ -172,7 +172,7 @@ body {
 
 label { display: grid; gap: 4px; font-size: 0.78rem; color: var(--muted); }
 
-input, select, button {
+input:not([type="checkbox"]), select, button {
   font: 500 0.92rem/1.1 "IBM Plex Sans", "Noto Sans", sans-serif;
   border-radius: 12px;
   border: 1px solid rgba(146, 173, 247, 0.4);
@@ -182,10 +182,31 @@ input, select, button {
   transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
 }
 
-input:focus, select:focus {
+input:not([type="checkbox"]):focus, select:focus {
   outline: none;
   border-color: rgba(59, 213, 255, 0.85);
   box-shadow: 0 0 0 3px rgba(59, 213, 255, 0.18);
+}
+
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
+.bool-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.bool-inline {
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 button {
@@ -271,17 +292,23 @@ th:nth-child(2), td:nth-child(2) { width: 96px; }
 th:nth-child(3), td:nth-child(3) { width: 92px; }
 th:nth-child(4), td:nth-child(4) { width: 96px; }
 th:nth-child(5), td:nth-child(5) { width: 92px; }
-th:nth-child(6), td:nth-child(6) { width: 84px; }
-th:nth-child(7), td:nth-child(7) { width: 132px; }
-th:nth-child(8), td:nth-child(8) { width: 146px; }
-th:nth-child(9), td:nth-child(9) { width: 110px; }
+th:nth-child(6), td:nth-child(6) { width: 102px; }
+th:nth-child(7), td:nth-child(7) { width: 84px; }
+th:nth-child(8), td:nth-child(8) { width: 132px; }
+th:nth-child(9), td:nth-child(9) { width: 146px; }
+th:nth-child(10), td:nth-child(10) { width: 110px; }
 
-td input,
+td input:not([type="checkbox"]),
 td select {
   width: 100%;
   min-width: 0;
   padding: 8px 9px;
   font-size: 0.84rem;
+}
+
+td input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
 }
 
 .status {

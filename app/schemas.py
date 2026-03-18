@@ -13,6 +13,7 @@ class TaskCreate(BaseModel):
     last_crawl_at: datetime | None = None
     parser_name: str = Field(default="fixprice", min_length=1, max_length=64)
     include_images: bool | None = None
+    use_product_info: bool | None = None
     is_active: bool = True
 
 
@@ -23,6 +24,7 @@ class TaskUpdate(BaseModel):
     last_crawl_at: datetime | None = None
     parser_name: str | None = Field(default=None, min_length=1, max_length=64)
     include_images: bool | None = None
+    use_product_info: bool | None = None
     is_active: bool | None = None
 
 
@@ -36,6 +38,7 @@ class TaskOut(BaseModel):
     last_crawl_at: datetime | None
     parser_name: str
     include_images: bool
+    use_product_info: bool
     is_active: bool
     lease_owner_id: str | None
     lease_until: datetime | None

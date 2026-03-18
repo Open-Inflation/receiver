@@ -119,6 +119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_assigned_backlog=app_settings.orchestrator_max_assigned_backlog,
         manager_name=app_settings.orchestrator_manager_name,
         submit_include_images=app_settings.orchestrator_submit_include_images,
+        submit_use_product_info=app_settings.orchestrator_submit_use_product_info,
         submit_full_catalog=app_settings.orchestrator_submit_full_catalog,
         upload_archive_images=app_settings.orchestrator_upload_archive_images,
     )
@@ -238,6 +239,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if payload.include_images is None
             else payload.include_images
         )
+        use_product_info = (
+            app.state.settings.orchestrator_submit_use_product_info
+            if payload.use_product_info is None
+            else payload.use_product_info
+        )
         task = CrawlTask(
             city=payload.city.strip(),
             store=payload.store.strip(),
@@ -245,6 +251,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             last_crawl_at=payload.last_crawl_at,
             parser_name=payload.parser_name.strip(),
             include_images=include_images,
+            use_product_info=use_product_info,
             is_active=payload.is_active,
             created_at=now,
             updated_at=now,
@@ -253,12 +260,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.commit()
         session.refresh(task)
         LOGGER.info(
-            "Task created: id=%s city=%s store=%s parser=%s include_images=%s active=%s frequency_hours=%s",
+            "Task created: id=%s city=%s store=%s parser=%s include_images=%s use_product_info=%s active=%s frequency_hours=%s",
             task.id,
             task.city,
             task.store,
             task.parser_name,
             task.include_images,
+            task.use_product_info,
             task.is_active,
             task.frequency_hours,
         )
@@ -295,10 +303,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.commit()
         session.refresh(task)
         LOGGER.info(
-            "Task updated: id=%s active=%s include_images=%s frequency_hours=%s parser=%s leased=%s",
+            "Task updated: id=%s active=%s include_images=%s use_product_info=%s frequency_hours=%s parser=%s leased=%s",
             task.id,
             task.is_active,
             task.include_images,
+            task.use_product_info,
             task.frequency_hours,
             task.parser_name,
             bool(task.lease_owner_id),

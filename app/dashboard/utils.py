@@ -47,6 +47,7 @@ def task_to_dict(task: CrawlTask, *, now: datetime | None = None) -> dict[str, o
         "last_crawl_at": _iso_utc(task.last_crawl_at),
         "parser_name": task.parser_name,
         "include_images": task.include_images,
+        "use_product_info": task.use_product_info,
         "is_active": task.is_active,
         "is_due": bool(task.is_active and is_task_due(task, now=reference_time)),
         "lease_owner_id": task.lease_owner_id,

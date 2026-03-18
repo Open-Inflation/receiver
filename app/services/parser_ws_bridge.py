@@ -39,6 +39,7 @@ class ParserWsBridge:
         submit_include_images: bool,
         submit_full_catalog: bool,
         upload_archive_images: bool,
+        submit_use_product_info: bool = True,
         ws_request_timeout_sec: float = 15.0,
         max_claims_per_cycle: int = 2,
         assigned_parallelism: int = 2,
@@ -58,6 +59,7 @@ class ParserWsBridge:
         self._max_assigned_backlog = max(1, int(max_assigned_backlog))
         self._manager_name = manager_name
         self._default_submit_include_images = submit_include_images
+        self._default_submit_use_product_info = submit_use_product_info
         self._submit_full_catalog = submit_full_catalog
         self._upload_archive_images = upload_archive_images
 
@@ -476,6 +478,7 @@ class ParserWsBridge:
             "store_code": task.store,
             "parser": task.parser_name,
             "include_images": self._resolve_task_include_images(task),
+            "use_product_info": self._resolve_task_use_product_info(task),
             "full_catalog": self._submit_full_catalog,
         }
         city_token = task.city.strip()
@@ -501,11 +504,12 @@ class ParserWsBridge:
                 },
             )
             LOGGER.info(
-                "Submitted task %s store=%s parser=%s include_images=%s remote_job_id=%s",
+                "Submitted task %s store=%s parser=%s include_images=%s use_product_info=%s remote_job_id=%s",
                 run.task_id,
                 task.store,
                 task.parser_name,
                 payload["include_images"],
+                payload["use_product_info"],
                 response.get("job_id"),
             )
             return
@@ -593,6 +597,14 @@ class ParserWsBridge:
         if include_images is not None:
             return bool(include_images)
         return bool(self._default_submit_include_images)
+
+    def _resolve_task_use_product_info(self, task: CrawlTask) -> bool:
+        use_product_info = getattr(task, "use_product_info", None)
+        if isinstance(use_product_info, bool):
+            return use_product_info
+        if use_product_info is not None:
+            return bool(use_product_info)
+        return bool(self._default_submit_use_product_info)
 
     @staticmethod
     def _safe_str(value: Any) -> str | None:
