@@ -640,6 +640,66 @@ def test_dashboard_overview_remote_terminal_disables_live_log(tmp_path: Path):
         assert recent["can_open_live_log"] is False
 
 
+def test_dashboard_overview_exposes_category_progress(tmp_path: Path):
+    app = create_dashboard_app(_settings(tmp_path))
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        task = CrawlTask(
+            city="Moscow",
+            store="C780",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        orchestrator = Orchestrator(
+            id="p" * 32,
+            name="parser-ws-progress",
+            token="x" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        run = TaskRun(
+            id="y" * 32,
+            task_id=1,
+            orchestrator_id=orchestrator.id,
+            status="assigned",
+            assigned_at=now,
+            dispatch_meta_json={
+                "remote_job_id": "job-781",
+                "remote_status": "running",
+                "category_progress": {
+                    "categories_total": 12,
+                    "categories_done": 5,
+                    "current_category_alias": "beverages",
+                    "updated_at": now.isoformat(),
+                },
+            },
+        )
+        session.add(task)
+        session.add(orchestrator)
+        session.flush()
+        run.task_id = task.id
+        session.add(run)
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        recent = overview.json()["recent_runs"][0]
+        assert recent["status"] == "assigned"
+        assert recent["remote_status"] == "running"
+        assert recent["progress_total"] == 12
+        assert recent["progress_done"] == 5
+        assert recent["progress_category_alias"] == "beverages"
+        assert recent["progress_percent"] == 42
+
+
 def test_dashboard_overview_exposes_finalize_error_message(tmp_path: Path):
     app = create_dashboard_app(_settings(tmp_path))
     session = app.state.session_factory()

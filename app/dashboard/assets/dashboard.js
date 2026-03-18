@@ -533,6 +533,40 @@
         const errorText = errorMessage
           ? `<div class="run-error">${escapeHtml(errorMessage)}</div>`
           : '';
+        const progressTotalRaw = Number(run.progress_total);
+        const progressDoneRaw = Number(run.progress_done);
+        const hasProgress = Number.isFinite(progressTotalRaw) && progressTotalRaw > 0;
+        const progressTotal = hasProgress ? Math.floor(progressTotalRaw) : 0;
+        const progressDoneUnsafe = Number.isFinite(progressDoneRaw) ? Math.floor(progressDoneRaw) : 0;
+        const progressDone = hasProgress
+          ? Math.max(0, Math.min(progressTotal, progressDoneUnsafe))
+          : 0;
+        const progressPercentRaw = Number(run.progress_percent);
+        const progressPercent = hasProgress
+          ? (Number.isFinite(progressPercentRaw)
+            ? Math.max(0, Math.min(100, Math.floor(progressPercentRaw)))
+            : Math.round((progressDone / progressTotal) * 100))
+          : 0;
+        const progressAliasRaw = typeof run.progress_category_alias === 'string'
+          ? run.progress_category_alias.trim()
+          : '';
+        const progressAlias = progressAliasRaw || 'подготовка данных категорий';
+        const progressVisible = hasProgress && !run.remote_terminal && run.status === 'assigned';
+        const progressText = progressVisible
+          ? `<div class="run-progress-note">категория: <span class="mono">${escapeHtml(progressAlias)}</span></div>`
+          : '';
+        const progressBar = progressVisible
+          ? `
+          <div class="run-progress">
+            <div class="run-progress-top">
+              <span>категории: ${progressDone}/${progressTotal}</span>
+              <span>${progressPercent}%</span>
+            </div>
+            <div class="run-progress-track"><span style="width:${progressPercent}%"></span></div>
+            ${progressText}
+          </div>
+          `
+          : '';
         const cancelButton = canCancel
           ? `<button type="button" class="danger run-cancel" data-action="cancel-run" data-run-id="${run.id}">Остановить</button>`
           : '';
@@ -549,6 +583,7 @@
           <div class="muted">orch: ${run.orchestrator_name || '—'}</div>
           <div class="muted">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
           <div class="muted">converter: ${Number(run.converter_elapsed_sec || 0)}s • finish: ${fmtDate(run.finish)}</div>
+          ${progressBar}
           ${validationText}
           ${errorText}
           ${cancelButton}

@@ -509,6 +509,25 @@ def create_dashboard_router(
 
     @router.get("/api/overview")
     def overview() -> dict[str, object]:
+        def _non_negative_int_or_none(value: Any) -> int | None:
+            if isinstance(value, bool):
+                return None
+            if isinstance(value, int):
+                return max(0, value)
+            if isinstance(value, float):
+                if value.is_integer():
+                    return max(0, int(value))
+                return None
+            if isinstance(value, str):
+                token = value.strip()
+                if not token:
+                    return None
+                try:
+                    return max(0, int(token))
+                except ValueError:
+                    return None
+            return None
+
         session = session_factory()
         try:
             now = utcnow()
@@ -591,6 +610,27 @@ def create_dashboard_router(
                 remote_terminal = remote_status in {"success", "error", "cancelled"}
                 remote_job_id = run_meta.get("remote_job_id")
                 has_remote_job_id = isinstance(remote_job_id, str) and bool(remote_job_id.strip())
+                progress_payload = run_meta.get("category_progress")
+                progress_total: int | None = None
+                progress_done: int | None = None
+                progress_alias: str | None = None
+                progress_percent: int | None = None
+                if isinstance(progress_payload, dict):
+                    progress_total = _non_negative_int_or_none(progress_payload.get("categories_total"))
+                    progress_done = _non_negative_int_or_none(progress_payload.get("categories_done"))
+                    if progress_total is not None and progress_done is not None:
+                        if progress_total > 0:
+                            progress_done = min(progress_done, progress_total)
+                            progress_percent = int(round((progress_done / progress_total) * 100))
+                        elif progress_done > 0:
+                            progress_total = progress_done
+                            progress_percent = 100
+                        else:
+                            progress_percent = 0
+                    alias_token = progress_payload.get("current_category_alias")
+                    if alias_token is not None:
+                        normalized_alias = str(alias_token).strip()
+                        progress_alias = normalized_alias or None
                 local_terminal = str(run_status).strip().lower() in {"success", "error"}
                 validation_failed = bool(run_status == "success" and dataclass_validated is False)
                 if validation_failed:
@@ -618,6 +658,10 @@ def create_dashboard_router(
                         "remote_status": remote_status,
                         "remote_terminal": bool(remote_terminal),
                         "error_message": str(run_error_message).strip() if run_error_message else None,
+                        "progress_total": progress_total,
+                        "progress_done": progress_done,
+                        "progress_category_alias": progress_alias,
+                        "progress_percent": progress_percent,
                         "validation_failed": validation_failed,
                         "dataclass_validated": dataclass_validated,
                         "can_open_live_log": bool(not local_terminal and not remote_terminal and has_remote_job_id),

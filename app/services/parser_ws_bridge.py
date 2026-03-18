@@ -363,6 +363,7 @@ class ParserWsBridge:
                 return
 
             remote_status = str(job_payload.get("status", "")).lower().strip()
+            category_progress = self._normalize_category_progress(job_payload.get("category_progress"))
             LOGGER.debug(
                 "Remote job status: run_id=%s remote_job_id=%s status=%s",
                 run.id,
@@ -374,6 +375,7 @@ class ParserWsBridge:
                 run,
                 {
                     "remote_status": remote_status,
+                    "category_progress": category_progress,
                     "last_poll_at": utcnow().isoformat(),
                 },
             )
@@ -617,6 +619,44 @@ class ParserWsBridge:
             return None
         token = str(value).strip()
         return token or None
+
+    @staticmethod
+    def _safe_non_negative_int(value: Any) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return max(0, value)
+        if isinstance(value, float):
+            if value.is_integer():
+                return max(0, int(value))
+            return 0
+        if isinstance(value, str):
+            token = value.strip()
+            if not token:
+                return 0
+            try:
+                return max(0, int(token))
+            except ValueError:
+                return 0
+        return 0
+
+    def _normalize_category_progress(self, value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        total = self._safe_non_negative_int(value.get("categories_total"))
+        done = self._safe_non_negative_int(value.get("categories_done"))
+        if total > 0:
+            done = min(done, total)
+        elif done > 0:
+            total = done
+        current_category_alias = self._safe_str(value.get("current_category_alias"))
+        updated_at = self._safe_str(value.get("updated_at")) or utcnow().isoformat()
+        return {
+            "categories_total": total,
+            "categories_done": done,
+            "current_category_alias": current_category_alias,
+            "updated_at": updated_at,
+        }
 
     async def _process_archive_images(self, archive_path: str | None) -> list[dict[str, Any]]:
         async_method = getattr(self._image_pipeline, "process_archive_images_async", None)

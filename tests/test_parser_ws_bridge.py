@@ -179,6 +179,97 @@ def test_parser_ws_bridge_cycle(tmp_path):
     asyncio.run(_run_bridge_cycle_test(db_url))
 
 
+async def _run_running_status_persists_category_progress_test(database_url: str) -> None:
+    engine = create_sqlalchemy_engine(database_url)
+    session_factory = create_session_factory(engine)
+    Base.metadata.create_all(bind=engine)
+
+    session = session_factory()
+    try:
+        task = CrawlTask(
+            city="3",
+            store="C009",
+            frequency_hours=24,
+            parser_name="fixprice",
+            include_images=False,
+            use_product_info=False,
+            is_active=True,
+            created_at=utcnow(),
+            updated_at=utcnow(),
+        )
+        session.add(task)
+        session.commit()
+    finally:
+        session.close()
+
+    bridge = ParserWsBridge(
+        session_factory=session_factory,
+        parser_bridge=DummyParserBridge(),
+        image_pipeline=DummyImagePipeline(),
+        artifact_ingestor=DummyArtifactIngestor(),
+        lease_ttl_minutes=30,
+        ws_url="ws://127.0.0.1:8765",
+        ws_password=None,
+        poll_interval_sec=0.2,
+        manager_name="parser-ws-progress",
+        submit_include_images=True,
+        submit_full_catalog=True,
+        upload_archive_images=True,
+        max_claims_per_cycle=1,
+    )
+
+    responses = [
+        {"ok": True, "action": "pong"},
+        {"ok": True, "action": "submit_store", "job_id": "job-009", "status": "queued"},
+        {"ok": True, "action": "pong"},
+        {
+            "ok": True,
+            "action": "status",
+            "job": {
+                "job_id": "job-009",
+                "status": "running",
+                "category_progress": {
+                    "categories_total": 20,
+                    "categories_done": 6,
+                    "current_category_alias": "snacks",
+                    "updated_at": utcnow().isoformat(),
+                },
+            },
+        },
+    ]
+
+    async def fake_ws_request(payload):
+        assert responses, f"Unexpected ws request: {payload}"
+        return responses.pop(0)
+
+    bridge._ws_request = fake_ws_request  # type: ignore[method-assign]
+
+    await bridge.run_cycle()
+    await bridge.run_cycle()
+
+    check_session = session_factory()
+    try:
+        run = check_session.scalar(select(TaskRun).order_by(TaskRun.assigned_at.desc()))
+        assert run is not None
+        assert run.status == "assigned"
+        assert isinstance(run.dispatch_meta_json, dict)
+        assert run.dispatch_meta_json.get("remote_status") == "running"
+        progress = run.dispatch_meta_json.get("category_progress")
+        assert isinstance(progress, dict)
+        assert progress["categories_total"] == 20
+        assert progress["categories_done"] == 6
+        assert progress["current_category_alias"] == "snacks"
+        assert progress.get("updated_at") is not None
+    finally:
+        check_session.close()
+        engine.dispose()
+
+
+def test_running_status_persists_category_progress(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'bridge-progress.sqlite3'}"
+    asyncio.run(_run_running_status_persists_category_progress_test(db_url))
+
+
 async def _run_ws_persistent_connection_test() -> None:
     bridge = ParserWsBridge(
         session_factory=None,  # type: ignore[arg-type]
