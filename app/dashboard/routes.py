@@ -9,11 +9,11 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import CrawlTask, Orchestrator, TaskRun
+from app.models import CrawlTask, Orchestrator, ParserStoreDirectory, TaskRun
 from app.services.scheduler import (
     TERMINAL_RUN_STATUSES,
     as_utc,
@@ -23,14 +23,144 @@ from app.services.scheduler import (
     utcnow,
 )
 
-from .schemas import TaskCreateIn, TaskUpdateIn
+from .schemas import StoreDirectorySyncIn, TaskCreateIn, TaskUpdateIn
 from .utils import dispatch_meta, task_to_dict
 
 LOGGER = logging.getLogger(__name__)
+SUPPORTED_STORE_DIRECTORY_PARSERS = {"fixprice", "chizhik"}
 
 OrchestratorWsConnector = Callable[[str], Awaitable[Any]]
 OrchestratorWsConnectorGetter = Callable[[], OrchestratorWsConnector]
 SessionFactory = Callable[[], Session]
+
+
+def _safe_non_empty_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    token = str(value).strip()
+    return token or None
+
+
+def _safe_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        token = value.strip()
+        if not token:
+            return None
+        try:
+            return float(token)
+        except ValueError:
+            return None
+    return None
+
+
+def _safe_schedule_value(value: Any) -> str | None:
+    token = _safe_non_empty_str(value)
+    if token is None:
+        return None
+    return token[:16]
+
+
+def _store_directory_to_dict(row: ParserStoreDirectory) -> dict[str, object]:
+    return {
+        "id": int(row.id),
+        "parser_name": row.parser_name,
+        "store_code": row.store_code,
+        "city_name": row.city_name,
+        "city_alias": row.city_alias,
+        "country": row.country,
+        "region": row.region,
+        "retail_type": row.retail_type,
+        "address": row.address,
+        "schedule_weekdays_open_from": row.schedule_weekdays_open_from,
+        "schedule_weekdays_closed_from": row.schedule_weekdays_closed_from,
+        "schedule_saturday_open_from": row.schedule_saturday_open_from,
+        "schedule_saturday_closed_from": row.schedule_saturday_closed_from,
+        "schedule_sunday_open_from": row.schedule_sunday_open_from,
+        "schedule_sunday_closed_from": row.schedule_sunday_closed_from,
+        "temporarily_closed": row.temporarily_closed,
+        "longitude": row.longitude,
+        "latitude": row.latitude,
+        "is_partial": bool(row.is_partial),
+        "is_active": bool(row.is_active),
+        "first_seen_at": as_utc(row.first_seen_at).isoformat(),
+        "last_seen_at": as_utc(row.last_seen_at).isoformat(),
+        "updated_at": as_utc(row.updated_at).isoformat(),
+    }
+
+
+def _normalize_store_directory_payload(
+    *,
+    parser_name: str,
+    raw_store: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    store_code = _safe_non_empty_str(raw_store.get("code"))
+    if store_code is None:
+        return None, "store entry skipped: missing code"
+
+    administrative_unit = (
+        raw_store.get("administrative_unit")
+        if isinstance(raw_store.get("administrative_unit"), dict)
+        else {}
+    )
+    schedule_weekdays = (
+        raw_store.get("schedule_weekdays")
+        if isinstance(raw_store.get("schedule_weekdays"), dict)
+        else {}
+    )
+    schedule_saturday = (
+        raw_store.get("schedule_saturday")
+        if isinstance(raw_store.get("schedule_saturday"), dict)
+        else {}
+    )
+    schedule_sunday = (
+        raw_store.get("schedule_sunday")
+        if isinstance(raw_store.get("schedule_sunday"), dict)
+        else {}
+    )
+
+    longitude = _safe_float(raw_store.get("longitude"))
+    if longitude is None:
+        longitude = _safe_float(administrative_unit.get("longitude"))
+    latitude = _safe_float(raw_store.get("latitude"))
+    if latitude is None:
+        latitude = _safe_float(administrative_unit.get("latitude"))
+    address = _safe_non_empty_str(raw_store.get("address"))
+    is_partial = bool(address is None or longitude is None or latitude is None)
+
+    payload = dict(raw_store)
+    payload.pop("categories", None)
+    payload.pop("products", None)
+
+    normalized = {
+        "parser_name": parser_name,
+        "store_code": store_code,
+        "city_name": _safe_non_empty_str(administrative_unit.get("name")),
+        "city_alias": _safe_non_empty_str(administrative_unit.get("alias")),
+        "country": _safe_non_empty_str(administrative_unit.get("country")),
+        "region": _safe_non_empty_str(administrative_unit.get("region")),
+        "retail_type": _safe_non_empty_str(raw_store.get("retail_type")),
+        "address": address,
+        "schedule_weekdays_open_from": _safe_schedule_value(schedule_weekdays.get("open_from")),
+        "schedule_weekdays_closed_from": _safe_schedule_value(schedule_weekdays.get("closed_from")),
+        "schedule_saturday_open_from": _safe_schedule_value(schedule_saturday.get("open_from")),
+        "schedule_saturday_closed_from": _safe_schedule_value(schedule_saturday.get("closed_from")),
+        "schedule_sunday_open_from": _safe_schedule_value(schedule_sunday.get("open_from")),
+        "schedule_sunday_closed_from": _safe_schedule_value(schedule_sunday.get("closed_from")),
+        "temporarily_closed": (
+            raw_store.get("temporarily_closed")
+            if isinstance(raw_store.get("temporarily_closed"), bool)
+            else None
+        ),
+        "longitude": longitude,
+        "latitude": latitude,
+        "payload_json": payload,
+        "is_partial": is_partial,
+    }
+    return normalized, None
 
 
 def create_dashboard_router(
@@ -176,6 +306,244 @@ def create_dashboard_router(
             session.commit()
             LOGGER.info("Dashboard task deleted: id=%s", task_id)
             return {"ok": True, "task_id": task_id}
+        finally:
+            session.close()
+
+    @router.get("/api/store-directory")
+    def list_store_directory(
+        parser_name: str = Query(min_length=1, max_length=64),
+        active_only: bool = Query(default=True),
+    ) -> list[dict[str, object]]:
+        normalized_parser = parser_name.strip().lower()
+        session = session_factory()
+        try:
+            stmt = select(ParserStoreDirectory).where(ParserStoreDirectory.parser_name == normalized_parser)
+            if active_only:
+                stmt = stmt.where(ParserStoreDirectory.is_active.is_(True))
+            rows = session.scalars(
+                stmt.order_by(
+                    func.coalesce(
+                        ParserStoreDirectory.city_alias,
+                        ParserStoreDirectory.city_name,
+                        ParserStoreDirectory.store_code,
+                    ).asc(),
+                    ParserStoreDirectory.store_code.asc(),
+                )
+            ).all()
+            return [_store_directory_to_dict(row) for row in rows]
+        finally:
+            session.close()
+
+    @router.post("/api/store-directory/sync")
+    async def sync_store_directory(payload: StoreDirectorySyncIn) -> dict[str, object]:
+        parser_name = payload.parser_name.strip().lower()
+        if parser_name not in SUPPORTED_STORE_DIRECTORY_PARSERS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Parser {parser_name!r} is not supported in store-directory sync (v1).",
+            )
+
+        request_payload: dict[str, Any] = {
+            "action": "collect_stores",
+            "parser": parser_name,
+        }
+        if payload.country_id is not None:
+            request_payload["country_id"] = int(payload.country_id)
+        if payload.city_id is not None:
+            request_payload["city_id"] = payload.city_id
+        if payload.api_timeout_ms is not None:
+            request_payload["api_timeout_ms"] = float(payload.api_timeout_ms)
+        if payload.strict_validation is not None:
+            request_payload["strict_validation"] = bool(payload.strict_validation)
+
+        try:
+            remote_response = await _orchestrator_ws_call(request_payload)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Store-directory sync failed: {exc}",
+            ) from exc
+
+        if remote_response.get("ok") is not True:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Store-directory sync failed: {remote_response.get('error', 'unknown error')}",
+            )
+
+        raw_stores = remote_response.get("stores")
+        if not isinstance(raw_stores, list):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Store-directory sync failed: parser returned invalid stores payload.",
+            )
+
+        warnings: list[str] = [
+            str(item).strip()
+            for item in remote_response.get("warnings", [])
+            if isinstance(item, str) and item.strip()
+        ]
+        normalized_by_code: dict[str, dict[str, Any]] = {}
+        skipped_count = 0
+        duplicate_count = 0
+        for raw_store in raw_stores:
+            if not isinstance(raw_store, dict):
+                skipped_count += 1
+                warnings.append("store entry skipped: invalid payload item")
+                continue
+            normalized, warning = _normalize_store_directory_payload(
+                parser_name=parser_name,
+                raw_store=raw_store,
+            )
+            if warning is not None:
+                skipped_count += 1
+                warnings.append(warning)
+                continue
+            if normalized is None:
+                skipped_count += 1
+                continue
+            store_code = str(normalized["store_code"])
+            if store_code in normalized_by_code:
+                duplicate_count += 1
+            normalized_by_code[store_code] = normalized
+
+        normalized_rows = list(normalized_by_code.values())
+        partial_count = sum(1 for item in normalized_rows if bool(item.get("is_partial")))
+        remote_count_raw = remote_response.get("stores_count")
+        if isinstance(remote_count_raw, int) and not isinstance(remote_count_raw, bool):
+            remote_count = max(0, remote_count_raw)
+        elif isinstance(remote_count_raw, float):
+            remote_count = max(0, int(remote_count_raw))
+        elif isinstance(remote_count_raw, str):
+            token = remote_count_raw.strip()
+            if token.isdigit():
+                remote_count = int(token)
+            else:
+                remote_count = len(raw_stores)
+        else:
+            remote_count = len(raw_stores)
+        synced_at = utcnow()
+
+        session = session_factory()
+        try:
+            active_before = int(
+                session.scalar(
+                    select(func.count(ParserStoreDirectory.id)).where(
+                        ParserStoreDirectory.parser_name == parser_name,
+                        ParserStoreDirectory.is_active.is_(True),
+                    )
+                )
+                or 0
+            )
+            inserted_count = 0
+            updated_count = 0
+            reactivated_count = 0
+            deactivated_count = 0
+
+            if not normalized_rows:
+                warnings.append(
+                    "Parser returned empty store snapshot. Existing active directory records were kept unchanged."
+                )
+                active_after = active_before
+            else:
+                seen_codes = {str(item["store_code"]) for item in normalized_rows}
+                existing_rows = session.scalars(
+                    select(ParserStoreDirectory).where(
+                        ParserStoreDirectory.parser_name == parser_name,
+                        ParserStoreDirectory.store_code.in_(seen_codes),
+                    )
+                ).all()
+                existing_by_code = {row.store_code: row for row in existing_rows}
+
+                for item in normalized_rows:
+                    store_code = str(item["store_code"])
+                    row = existing_by_code.get(store_code)
+                    if row is None:
+                        session.add(
+                            ParserStoreDirectory(
+                                **item,
+                                is_active=True,
+                                first_seen_at=synced_at,
+                                last_seen_at=synced_at,
+                                updated_at=synced_at,
+                            )
+                        )
+                        inserted_count += 1
+                        continue
+
+                    was_active = bool(row.is_active)
+                    row.city_name = item.get("city_name")
+                    row.city_alias = item.get("city_alias")
+                    row.country = item.get("country")
+                    row.region = item.get("region")
+                    row.retail_type = item.get("retail_type")
+                    row.address = item.get("address")
+                    row.schedule_weekdays_open_from = item.get("schedule_weekdays_open_from")
+                    row.schedule_weekdays_closed_from = item.get("schedule_weekdays_closed_from")
+                    row.schedule_saturday_open_from = item.get("schedule_saturday_open_from")
+                    row.schedule_saturday_closed_from = item.get("schedule_saturday_closed_from")
+                    row.schedule_sunday_open_from = item.get("schedule_sunday_open_from")
+                    row.schedule_sunday_closed_from = item.get("schedule_sunday_closed_from")
+                    row.temporarily_closed = item.get("temporarily_closed")
+                    row.longitude = item.get("longitude")
+                    row.latitude = item.get("latitude")
+                    row.payload_json = item.get("payload_json")
+                    row.is_partial = bool(item.get("is_partial"))
+                    row.is_active = True
+                    row.last_seen_at = synced_at
+                    row.updated_at = synced_at
+                    if was_active:
+                        updated_count += 1
+                    else:
+                        reactivated_count += 1
+
+                deactivated_count = int(
+                    session.execute(
+                        update(ParserStoreDirectory)
+                        .where(
+                            ParserStoreDirectory.parser_name == parser_name,
+                            ParserStoreDirectory.is_active.is_(True),
+                            ParserStoreDirectory.store_code.notin_(seen_codes),
+                        )
+                        .values(
+                            is_active=False,
+                            updated_at=synced_at,
+                        )
+                        .execution_options(synchronize_session=False)
+                    ).rowcount
+                    or 0
+                )
+                session.commit()
+                active_after = int(
+                    session.scalar(
+                        select(func.count(ParserStoreDirectory.id)).where(
+                            ParserStoreDirectory.parser_name == parser_name,
+                            ParserStoreDirectory.is_active.is_(True),
+                        )
+                    )
+                    or 0
+                )
+
+            if duplicate_count > 0:
+                warnings.append(
+                    f"Duplicate store codes in parser payload were merged: {duplicate_count} entries."
+                )
+
+            return {
+                "ok": True,
+                "parser_name": parser_name,
+                "synced_at": synced_at.isoformat(),
+                "remote_count": remote_count,
+                "processed_count": len(normalized_rows),
+                "partial_count": partial_count,
+                "skipped_count": skipped_count,
+                "inserted_count": inserted_count,
+                "updated_count": updated_count,
+                "reactivated_count": reactivated_count,
+                "deactivated_count": deactivated_count,
+                "active_before": active_before,
+                "active_after": active_after,
+                "warnings": warnings,
+            }
         finally:
             session.close()
 

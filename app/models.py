@@ -3,7 +3,21 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, Numeric, String, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -100,6 +114,59 @@ class CrawlTask(Base):
 
     __table_args__ = (
         Index("ix_crawl_tasks_due_scan", "is_active", "lease_until", "last_crawl_at"),
+    )
+
+
+class ParserStoreDirectory(Base):
+    __tablename__ = "parser_store_directory"
+
+    id: Mapped[int] = mapped_column(_bigint_sqlite(), primary_key=True, autoincrement=True)
+
+    parser_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_code: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    city_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    region: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    retail_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    schedule_weekdays_open_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    schedule_weekdays_closed_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    schedule_saturday_open_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    schedule_saturday_closed_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    schedule_sunday_open_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    schedule_sunday_closed_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    temporarily_closed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
+
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(_json_postgres(), nullable=True)
+
+    is_partial: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("parser_name", "store_code", name="uq_parser_store_directory_parser_store"),
+        Index("ix_parser_store_directory_parser_active", "parser_name", "is_active"),
+        Index(
+            "ix_parser_store_directory_parser_city",
+            "parser_name",
+            "city_alias",
+            "city_name",
+        ),
     )
 
 

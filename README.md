@@ -44,6 +44,12 @@
 
 Для PostgreSQL runtime схема создается ORM-моделями (`Base.metadata.create_all`) и актуальными типами (`BIGINT/JSONB/ENUM/TIMESTAMPTZ/NUMERIC`).
 
+Опционально для управляемого rollout можно применить ручной SQL:
+
+```bash
+psql "$DATABASE_URL" -f migrations/manual/20260319_parser_store_directory.sql
+```
+
 ## Переменные окружения
 
 - `DATABASE_URL` - URL БД, например:
@@ -93,6 +99,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8090
 Есть отдельный исполняемый Python-скрипт `dashboard.py`.
 Это отдельное web-приложение для:
 - управления задачами (`create/update active/frequency/parser/include_images/use_product_info`);
+- синхронизации справочника магазинов из parser и выбора магазина на карте (`Leaflet + OSM`) с автозаполнением `city/store`;
 - просмотра общей статистики (`tasks/runs/orchestrators`);
 - просмотра последних запусков;
 - отдельной страницы ошибок валидации, подлежащих устранению (`/validation-errors`).
@@ -127,6 +134,8 @@ python dashboard.py --host 127.0.0.1 --port 8091
 - `PATCH /api/tasks/{task_id}` - обновить задачу
 - `POST /api/tasks/{task_id}/force-run` - принудительно создать и отправить `assigned` run в parser WS
 - `POST /api/tasks/{task_id}/reset-last-crawl` - выставить `last_crawl_at=now` для задачи
+- `POST /api/store-directory/sync` - вручную синхронизировать справочник магазинов выбранного parser через WS action `collect_stores`
+- `GET /api/store-directory?parser_name=...&active_only=true` - получить записи справочника магазинов для dashboard карты/списка
 - `GET /api/validation-errors` - список актуальных ошибок dataclass validation (dashboard; по последнему успешному run каждой задачи)
 - `GET /api/runs/{run_id}` - получить run
 - `POST /api/runs/{run_id}/cancel` - остановить активный run из dashboard (проксируется в parser `cancel_job`)

@@ -1,6 +1,14 @@
     const state = {
       overview: null,
       tasks: [],
+      storeDirectory: {
+        parserName: 'fixprice',
+        rows: [],
+        selectedStoreCode: null,
+        map: null,
+        markersLayer: null,
+        markerByCode: new Map(),
+      },
       logViewer: {
         runId: null,
         socket: null,
@@ -24,6 +32,17 @@
     const runLogTailEl = document.getElementById('run-log-tail');
     const runLogCompactEl = document.getElementById('run-log-compact');
     const timezoneLabelEl = document.getElementById('timezone-label');
+    const createFormEl = document.getElementById('create-form');
+    const openStoreMapButtonEl = document.getElementById('open-store-map');
+    const storeMapModalEl = document.getElementById('store-map-modal');
+    const storeMapBackdropEl = document.getElementById('store-map-backdrop');
+    const storeMapCloseEl = document.getElementById('store-map-close');
+    const storeMapParserEl = document.getElementById('store-map-parser');
+    const storeMapSyncEl = document.getElementById('store-map-sync');
+    const storeMapSearchEl = document.getElementById('store-map-search');
+    const storeMapStatusEl = document.getElementById('store-map-status');
+    const storeMapCanvasEl = document.getElementById('store-map-canvas');
+    const storeMapListEl = document.getElementById('store-map-list');
     const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     const localDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
       year: 'numeric',
@@ -135,6 +154,231 @@
     function wsUrl(path) {
       const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       return `${scheme}//${window.location.host}${path}`;
+    }
+
+    function normalizeParserName(value) {
+      const token = String(value || '').trim().toLowerCase();
+      return token || 'fixprice';
+    }
+
+    function hasStoreCoordinates(row) {
+      const lat = Number(row?.latitude);
+      const lon = Number(row?.longitude);
+      return Number.isFinite(lat) && Number.isFinite(lon);
+    }
+
+    function storeDirectoryDisplayTitle(row) {
+      const code = String(row?.store_code || '').trim() || '—';
+      const city = String(row?.city_alias || row?.city_name || '').trim();
+      if (city) return `${code} • ${city}`;
+      return code;
+    }
+
+    function setStoreMapStatus(message, tone = 'info') {
+      if (!storeMapStatusEl) return;
+      storeMapStatusEl.textContent = String(message || '');
+      const color = tone === 'error'
+        ? 'var(--err)'
+        : (tone === 'warning' ? 'var(--warn)' : 'var(--muted)');
+      storeMapStatusEl.style.color = color;
+    }
+
+    function resetStoreMapSelection() {
+      state.storeDirectory.selectedStoreCode = null;
+      storeMapListEl?.querySelectorAll('.store-map-item.is-selected').forEach((element) => {
+        element.classList.remove('is-selected');
+      });
+    }
+
+    function closeStoreMapModal() {
+      if (!storeMapModalEl) return;
+      storeMapModalEl.hidden = true;
+      document.body.style.overflow = '';
+      resetStoreMapSelection();
+    }
+
+    function ensureStoreMap() {
+      if (!storeMapCanvasEl) return false;
+      const L = window.L;
+      if (!L || typeof L.map !== 'function') {
+        setStoreMapStatus(
+          'Leaflet недоступен (например, без интернета). Используйте выбор из списка.',
+          'warning'
+        );
+        return false;
+      }
+
+      if (state.storeDirectory.map) return true;
+      const map = L.map(storeMapCanvasEl, {
+        zoomControl: true,
+      }).setView([55.751244, 37.618423], 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(map);
+      state.storeDirectory.map = map;
+      state.storeDirectory.markersLayer = L.layerGroup().addTo(map);
+      return true;
+    }
+
+    function clearStoreMapMarkers() {
+      state.storeDirectory.markerByCode = new Map();
+      if (state.storeDirectory.markersLayer) {
+        state.storeDirectory.markersLayer.clearLayers();
+      }
+    }
+
+    function applyStoreSelection(row) {
+      if (!createFormEl || !row) return;
+      const parserName = normalizeParserName(row.parser_name || storeMapParserEl?.value);
+      const cityValue = String(row.city_alias || row.city_name || row.address || '').trim();
+      const storeCode = String(row.store_code || '').trim();
+      if (storeCode) {
+        createFormEl.store.value = storeCode;
+      }
+      if (cityValue) {
+        createFormEl.city.value = cityValue;
+      }
+      createFormEl.parser_name.value = parserName;
+      flash(`Выбран магазин ${storeCode || '—'} (${parserName})`);
+      closeStoreMapModal();
+    }
+
+    function renderStoreMapList(rows) {
+      if (!storeMapListEl) return;
+      if (!Array.isArray(rows) || !rows.length) {
+        storeMapListEl.innerHTML = '<div class="store-map-empty">Магазины не найдены.</div>';
+        return;
+      }
+      storeMapListEl.innerHTML = rows.map((row) => {
+        const hasCoords = hasStoreCoordinates(row);
+        const address = String(row.address || '').trim() || 'адрес не указан';
+        const city = String(row.city_alias || row.city_name || '').trim() || 'город не указан';
+        const partialLabel = row.is_partial ? 'частичные данные' : 'полные данные';
+        return `
+          <button type="button" class="store-map-item" data-store-code="${escapeHtml(row.store_code || '')}">
+            <div class="store-map-item-title">${escapeHtml(storeDirectoryDisplayTitle(row))}</div>
+            <div class="store-map-item-meta">${escapeHtml(city)} • ${escapeHtml(address)}</div>
+            <div class="store-map-item-meta">${hasCoords ? 'есть координаты' : 'без координат'} • ${escapeHtml(partialLabel)}</div>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function renderStoreMapMarkers(rows) {
+      clearStoreMapMarkers();
+      if (!ensureStoreMap()) return;
+      const map = state.storeDirectory.map;
+      const markersLayer = state.storeDirectory.markersLayer;
+      const L = window.L;
+      if (!map || !markersLayer || !L) return;
+
+      const bounds = [];
+      rows.forEach((row) => {
+        if (!hasStoreCoordinates(row)) return;
+        const lat = Number(row.latitude);
+        const lon = Number(row.longitude);
+        const marker = L.marker([lat, lon], {
+          title: storeDirectoryDisplayTitle(row),
+        });
+        marker.on('click', () => applyStoreSelection(row));
+        marker.addTo(markersLayer);
+        state.storeDirectory.markerByCode.set(String(row.store_code || ''), marker);
+        bounds.push([lat, lon]);
+      });
+
+      if (bounds.length === 1) {
+        map.setView(bounds[0], 12);
+      } else if (bounds.length > 1) {
+        map.fitBounds(bounds, { padding: [24, 24] });
+      }
+      map.invalidateSize();
+    }
+
+    function filteredStoreRows() {
+      const query = String(storeMapSearchEl?.value || '').trim().toLowerCase();
+      if (!query) return state.storeDirectory.rows.slice();
+      return state.storeDirectory.rows.filter((row) => {
+        const fields = [
+          row.store_code,
+          row.city_alias,
+          row.city_name,
+          row.address,
+          row.retail_type,
+        ];
+        return fields.some((value) => String(value || '').toLowerCase().includes(query));
+      });
+    }
+
+    function renderStoreDirectory() {
+      const rows = filteredStoreRows();
+      renderStoreMapList(rows);
+      renderStoreMapMarkers(rows);
+      const withCoords = rows.filter((row) => hasStoreCoordinates(row)).length;
+      const partial = rows.filter((row) => !!row.is_partial).length;
+      const summary = `Магазинов: ${rows.length} • с координатами: ${withCoords} • partial: ${partial}`;
+      const leafletAvailable = !!(window.L && typeof window.L.map === 'function');
+      if (leafletAvailable) {
+        setStoreMapStatus(summary, 'info');
+      } else {
+        setStoreMapStatus(`${summary} • Leaflet недоступен, работает list-only режим.`, 'warning');
+      }
+    }
+
+    async function loadStoreDirectory(parserName, { showErrorToast = true } = {}) {
+      const normalizedParser = normalizeParserName(parserName);
+      try {
+        const rows = await api(`/api/store-directory?parser_name=${encodeURIComponent(normalizedParser)}&active_only=true`);
+        state.storeDirectory.parserName = normalizedParser;
+        state.storeDirectory.rows = Array.isArray(rows) ? rows : [];
+        renderStoreDirectory();
+      } catch (err) {
+        state.storeDirectory.rows = [];
+        renderStoreDirectory();
+        setStoreMapStatus(`Ошибка загрузки справочника: ${err.message}`, 'error');
+        if (showErrorToast) {
+          flash(`Ошибка загрузки справочника: ${err.message}`, true);
+        }
+      }
+    }
+
+    async function syncStoreDirectory() {
+      const normalizedParser = normalizeParserName(storeMapParserEl?.value || state.storeDirectory.parserName);
+      if (storeMapParserEl) {
+        storeMapParserEl.value = normalizedParser;
+      }
+      setStoreMapStatus(`Синхронизация parser ${normalizedParser}...`, 'info');
+      try {
+        const response = await api('/api/store-directory/sync', {
+          method: 'POST',
+          body: JSON.stringify({ parser_name: normalizedParser }),
+        });
+        const warnings = Array.isArray(response.warnings) ? response.warnings.filter((item) => String(item || '').trim()) : [];
+        const summary = `Справочник ${normalizedParser}: ${Number(response.processed_count || 0)} записей, +${Number(response.inserted_count || 0)} / ~${Number(response.updated_count || 0)} / -${Number(response.deactivated_count || 0)}`;
+        flash(summary, false);
+        if (warnings.length) {
+          showToast(warnings[0], { tone: 'warning', ttlMs: 5200 });
+        }
+        await loadStoreDirectory(normalizedParser, { showErrorToast: true });
+      } catch (err) {
+        setStoreMapStatus(`Ошибка синхронизации: ${err.message}`, 'error');
+        flash(`Ошибка синхронизации справочника: ${err.message}`, true);
+      }
+    }
+
+    async function openStoreMapModal() {
+      if (!storeMapModalEl) return;
+      const parserFromForm = normalizeParserName(createFormEl?.parser_name?.value);
+      state.storeDirectory.parserName = parserFromForm;
+      if (storeMapParserEl) {
+        storeMapParserEl.value = parserFromForm;
+      }
+      if (storeMapSearchEl) {
+        storeMapSearchEl.value = '';
+      }
+      storeMapModalEl.hidden = false;
+      document.body.style.overflow = 'hidden';
+      await loadStoreDirectory(parserFromForm, { showErrorToast: false });
     }
 
     function closeLogSocket() {
@@ -822,11 +1066,40 @@
       openRunLog(card.dataset.runId);
     }
 
+    function onStoreMapListClick(event) {
+      const button = event.target.closest('.store-map-item[data-store-code]');
+      if (!button) return;
+      const storeCode = String(button.dataset.storeCode || '').trim();
+      if (!storeCode) return;
+      const selected = state.storeDirectory.rows.find((row) => String(row.store_code || '') === storeCode);
+      if (!selected) return;
+      applyStoreSelection(selected);
+    }
+
+    function onStoreMapSearchInput() {
+      renderStoreDirectory();
+    }
+
     document.getElementById('refresh').addEventListener('click', refreshAll);
-    document.getElementById('create-form').addEventListener('submit', createTask);
+    createFormEl.addEventListener('submit', createTask);
     taskBodyEl.addEventListener('click', onTaskAction);
     runListEl.addEventListener('click', onRunAction);
     runListEl.addEventListener('keydown', onRunKeydown);
+    openStoreMapButtonEl?.addEventListener('click', () => {
+      void openStoreMapModal();
+    });
+    storeMapCloseEl?.addEventListener('click', closeStoreMapModal);
+    storeMapBackdropEl?.addEventListener('click', closeStoreMapModal);
+    storeMapSyncEl?.addEventListener('click', () => {
+      void syncStoreDirectory();
+    });
+    storeMapParserEl?.addEventListener('change', () => {
+      const parserName = normalizeParserName(storeMapParserEl.value);
+      storeMapParserEl.value = parserName;
+      void loadStoreDirectory(parserName, { showErrorToast: true });
+    });
+    storeMapSearchEl?.addEventListener('input', onStoreMapSearchInput);
+    storeMapListEl?.addEventListener('click', onStoreMapListClick);
     document.getElementById('run-log-close').addEventListener('click', closeLogModal);
     document.getElementById('run-log-backdrop').addEventListener('click', closeLogModal);
     document.getElementById('run-log-reconnect').addEventListener('click', () => {
@@ -852,8 +1125,13 @@
     }
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return;
-      if (runLogModalEl.hidden) return;
-      closeLogModal();
+      if (!storeMapModalEl.hidden) {
+        closeStoreMapModal();
+        return;
+      }
+      if (!runLogModalEl.hidden) {
+        closeLogModal();
+      }
     });
 
     refreshAll();

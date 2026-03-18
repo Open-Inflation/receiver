@@ -25,3 +25,13 @@ class TaskUpdateIn(BaseModel):
     include_images: bool | None = None
     use_product_info: bool | None = None
     is_active: bool | None = None
+
+
+class StoreDirectorySyncIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parser_name: str = Field(min_length=1, max_length=64)
+    country_id: int | None = None
+    city_id: int | str | None = None
+    api_timeout_ms: float | None = None
+    strict_validation: bool | None = None

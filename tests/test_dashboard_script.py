@@ -5,10 +5,11 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.config import Settings
 from app.dashboard_app import create_dashboard_app
-from app.models import CrawlTask, Orchestrator, TaskRun
+from app.models import CrawlTask, Orchestrator, ParserStoreDirectory, TaskRun
 from app.services.scheduler import utcnow
 
 
@@ -278,6 +279,23 @@ class _FakeForceRunSocket:
 
     async def recv(self) -> str:
         assert self._responses, "No fake force-run payloads left"
+        return self._responses.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FakeStoreDirectorySyncSocket:
+    def __init__(self, response_payload: dict[str, object]) -> None:
+        self.closed = False
+        self.sent_payloads: list[str] = []
+        self._responses = [json.dumps(response_payload)]
+
+    async def send(self, payload: str) -> None:
+        self.sent_payloads.append(payload)
+
+    async def recv(self) -> str:
+        assert self._responses, "No fake store-directory payloads left"
         return self._responses.pop(0)
 
     async def close(self) -> None:
@@ -587,6 +605,294 @@ def test_dashboard_reset_last_crawl_sets_now(tmp_path: Path):
         assert task.last_crawl_at > previous_last_crawl_at
     finally:
         session.close()
+
+
+def test_dashboard_store_directory_sync_upserts_and_deactivates(tmp_path: Path, monkeypatch):
+    app = create_dashboard_app(_settings(tmp_path, ws_password="top-secret"))
+    fake_socket = _FakeStoreDirectorySyncSocket(
+        {
+            "ok": True,
+            "action": "collect_stores",
+            "parser": "fixprice",
+            "stores_count": 2,
+            "stores": [
+                {
+                    "code": "C001",
+                    "address": "Москва, Тестовая 1",
+                    "longitude": 37.62,
+                    "latitude": 55.75,
+                    "administrative_unit": {
+                        "name": "Москва",
+                        "alias": "moskva",
+                        "country": "RUS",
+                        "region": "Москва",
+                    },
+                },
+                {
+                    "code": "C002",
+                    "address": "Москва, Тестовая 2",
+                    "longitude": 37.63,
+                    "latitude": 55.76,
+                    "administrative_unit": {
+                        "name": "Москва",
+                        "alias": "moskva",
+                        "country": "RUS",
+                        "region": "Москва",
+                    },
+                },
+            ],
+            "warnings": [],
+        }
+    )
+
+    async def _fake_connect_orchestrator_ws(url: str):
+        assert url == "ws://127.0.0.1:8765"
+        return fake_socket
+
+    monkeypatch.setattr("app.dashboard_app._connect_orchestrator_ws", _fake_connect_orchestrator_ws)
+
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        session.add_all(
+            [
+                ParserStoreDirectory(
+                    parser_name="fixprice",
+                    store_code="C001",
+                    city_name="Moscow old",
+                    city_alias="old",
+                    is_partial=True,
+                    is_active=True,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    updated_at=now,
+                ),
+                ParserStoreDirectory(
+                    parser_name="fixprice",
+                    store_code="COLD",
+                    city_name="Cold city",
+                    is_partial=True,
+                    is_active=True,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        sync_resp = client.post(
+            "/api/store-directory/sync",
+            json={"parser_name": "fixprice"},
+        )
+        assert sync_resp.status_code == 200
+        body = sync_resp.json()
+        assert body["ok"] is True
+        assert body["processed_count"] == 2
+        assert body["inserted_count"] == 1
+        assert body["updated_count"] == 1
+        assert body["deactivated_count"] == 1
+        assert body["active_before"] == 2
+        assert body["active_after"] == 2
+
+        active_rows = client.get("/api/store-directory", params={"parser_name": "fixprice"})
+        assert active_rows.status_code == 200
+        active_codes = {item["store_code"] for item in active_rows.json()}
+        assert active_codes == {"C001", "C002"}
+
+        all_rows = client.get(
+            "/api/store-directory",
+            params={"parser_name": "fixprice", "active_only": "false"},
+        )
+        assert all_rows.status_code == 200
+        rows_by_code = {item["store_code"]: item for item in all_rows.json()}
+        assert rows_by_code["COLD"]["is_active"] is False
+        assert rows_by_code["C001"]["city_alias"] == "moskva"
+
+    sent_payload = json.loads(fake_socket.sent_payloads[0])
+    assert sent_payload["action"] == "collect_stores"
+    assert sent_payload["parser"] == "fixprice"
+    assert sent_payload["password"] == "top-secret"
+    assert fake_socket.closed is True
+
+
+def test_dashboard_store_directory_sync_empty_snapshot_keeps_active(tmp_path: Path, monkeypatch):
+    app = create_dashboard_app(_settings(tmp_path))
+    fake_socket = _FakeStoreDirectorySyncSocket(
+        {
+            "ok": True,
+            "action": "collect_stores",
+            "parser": "fixprice",
+            "stores_count": 0,
+            "stores": [],
+            "warnings": [],
+        }
+    )
+
+    async def _fake_connect_orchestrator_ws(url: str):
+        assert url == "ws://127.0.0.1:8765"
+        return fake_socket
+
+    monkeypatch.setattr("app.dashboard_app._connect_orchestrator_ws", _fake_connect_orchestrator_ws)
+
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        session.add(
+            ParserStoreDirectory(
+                parser_name="fixprice",
+                store_code="C777",
+                city_name="Москва",
+                is_active=True,
+                is_partial=True,
+                first_seen_at=now,
+                last_seen_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        sync_resp = client.post(
+            "/api/store-directory/sync",
+            json={"parser_name": "fixprice"},
+        )
+        assert sync_resp.status_code == 200
+        body = sync_resp.json()
+        assert body["processed_count"] == 0
+        assert body["deactivated_count"] == 0
+        assert body["active_before"] == 1
+        assert body["active_after"] == 1
+        assert any("empty store snapshot" in item.lower() for item in body["warnings"])
+
+    session = app.state.session_factory()
+    try:
+        row = session.scalar(
+            select(ParserStoreDirectory).where(
+                ParserStoreDirectory.parser_name == "fixprice",
+                ParserStoreDirectory.store_code == "C777",
+            )
+        )
+        assert row is not None
+        assert row.is_active is True
+    finally:
+        session.close()
+
+
+def test_dashboard_store_directory_sync_keeps_partial_chizhik_rows(tmp_path: Path, monkeypatch):
+    app = create_dashboard_app(_settings(tmp_path))
+    fake_socket = _FakeStoreDirectorySyncSocket(
+        {
+            "ok": True,
+            "action": "collect_stores",
+            "parser": "chizhik",
+            "stores_count": 1,
+            "stores": [
+                {
+                    "code": "moskva",
+                    "address": None,
+                    "longitude": 37.62,
+                    "latitude": 55.75,
+                    "administrative_unit": {
+                        "name": "Москва",
+                        "alias": "moskva",
+                    },
+                }
+            ],
+            "warnings": ["partial virtual stores"],
+        }
+    )
+
+    async def _fake_connect_orchestrator_ws(url: str):
+        assert url == "ws://127.0.0.1:8765"
+        return fake_socket
+
+    monkeypatch.setattr("app.dashboard_app._connect_orchestrator_ws", _fake_connect_orchestrator_ws)
+
+    with TestClient(app) as client:
+        sync_resp = client.post(
+            "/api/store-directory/sync",
+            json={"parser_name": "chizhik"},
+        )
+        assert sync_resp.status_code == 200
+        body = sync_resp.json()
+        assert body["processed_count"] == 1
+        assert body["partial_count"] == 1
+
+        rows = client.get("/api/store-directory", params={"parser_name": "chizhik"})
+        assert rows.status_code == 200
+        listed = rows.json()
+        assert len(listed) == 1
+        assert listed[0]["store_code"] == "moskva"
+        assert listed[0]["is_partial"] is True
+
+
+def test_dashboard_store_directory_list_filters_parser_and_active_flag(tmp_path: Path):
+    app = create_dashboard_app(_settings(tmp_path))
+
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        session.add_all(
+            [
+                ParserStoreDirectory(
+                    parser_name="fixprice",
+                    store_code="C001",
+                    city_name="Москва",
+                    is_active=True,
+                    is_partial=False,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    updated_at=now,
+                ),
+                ParserStoreDirectory(
+                    parser_name="fixprice",
+                    store_code="C002",
+                    city_name="Москва",
+                    is_active=False,
+                    is_partial=False,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    updated_at=now,
+                ),
+                ParserStoreDirectory(
+                    parser_name="chizhik",
+                    store_code="moskva",
+                    city_name="Москва",
+                    is_active=True,
+                    is_partial=True,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        fixprice_active = client.get("/api/store-directory", params={"parser_name": "fixprice"})
+        assert fixprice_active.status_code == 200
+        assert [item["store_code"] for item in fixprice_active.json()] == ["C001"]
+
+        fixprice_all = client.get(
+            "/api/store-directory",
+            params={"parser_name": "fixprice", "active_only": "false"},
+        )
+        assert fixprice_all.status_code == 200
+        assert {item["store_code"] for item in fixprice_all.json()} == {"C001", "C002"}
+
+        chizhik_active = client.get("/api/store-directory", params={"parser_name": "chizhik"})
+        assert chizhik_active.status_code == 200
+        listed = chizhik_active.json()
+        assert len(listed) == 1
+        assert listed[0]["store_code"] == "moskva"
 
 
 def test_dashboard_overview_remote_terminal_disables_live_log(tmp_path: Path):

@@ -4,6 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Receiver Control Room</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
     <link rel="stylesheet" href="/assets/dashboard.css" />
 </head>
 <body>
@@ -37,6 +43,7 @@
         <label>Активна
           <span class="bool-field"><input type="checkbox" name="is_active" checked /><span>Включено</span></span>
         </label>
+        <button type="button" id="open-store-map" class="ghost">Выбрать на карте</button>
         <button type="submit">Создать</button>
       </form>
     </section>
@@ -75,6 +82,30 @@
   </main>
   <section class="toast-host" id="toast-host" aria-live="polite" aria-atomic="false"></section>
 
+  <section class="store-map-modal" id="store-map-modal" hidden>
+    <div class="store-map-backdrop" id="store-map-backdrop"></div>
+    <section class="store-map-shell">
+      <div class="store-map-head">
+        <h3>Справочник магазинов</h3>
+        <button type="button" id="store-map-close" class="ghost">Закрыть</button>
+      </div>
+      <div class="store-map-toolbar">
+        <label>Parser
+          <input id="store-map-parser" placeholder="fixprice" />
+        </label>
+        <button type="button" id="store-map-sync">Синхронизировать магазины</button>
+        <label>Поиск
+          <input id="store-map-search" placeholder="город / магазин / адрес" />
+        </label>
+      </div>
+      <div class="store-map-status" id="store-map-status">Загрузите справочник или выполните синхронизацию.</div>
+      <div class="store-map-body">
+        <div class="store-map-canvas" id="store-map-canvas"></div>
+        <div class="store-map-list" id="store-map-list"></div>
+      </div>
+    </section>
+  </section>
+
   <section class="log-modal" id="run-log-modal" hidden>
     <div class="log-backdrop" id="run-log-backdrop"></div>
     <section class="log-shell">
@@ -98,6 +129,12 @@
     </section>
   </section>
 
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+    defer
+  ></script>
   <script src="/assets/dashboard.js" defer></script>
 </body>
 </html>
