@@ -15,7 +15,7 @@
     const orchListEl = document.getElementById('orch-list');
     const runListEl = document.getElementById('run-list');
     const generatedAtEl = document.getElementById('generated-at');
-    const flashEl = document.getElementById('flash');
+    const toastHostEl = document.getElementById('toast-host');
     const runLogModalEl = document.getElementById('run-log-modal');
     const runLogTitleEl = document.getElementById('run-log-title');
     const runLogStatusEl = document.getElementById('run-log-status');
@@ -37,10 +37,47 @@
     });
 
     function flash(message, isError = false) {
-      flashEl.textContent = message;
-      flashEl.style.color = isError ? 'var(--err)' : 'var(--warn)';
-      flashEl.classList.add('show');
-      window.setTimeout(() => flashEl.classList.remove('show'), 2600);
+      showToast(message, {
+        tone: isError ? 'error' : 'success',
+      });
+    }
+
+    function showToast(message, options = {}) {
+      if (!toastHostEl) return;
+      const tone = options.tone === 'error' ? 'error' : (options.tone === 'warning' ? 'warning' : 'success');
+      const ttlMsRaw = Number(options.ttlMs);
+      const ttlMs = Number.isFinite(ttlMsRaw) ? Math.max(1800, Math.floor(ttlMsRaw)) : (tone === 'error' ? 5200 : 3200);
+      const toast = document.createElement('article');
+      toast.className = `toast toast-${tone}`;
+      toast.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+      toast.setAttribute('aria-live', tone === 'error' ? 'assertive' : 'polite');
+      toast.innerHTML = `
+        <div class="toast-body">${escapeHtml(message)}</div>
+        <button type="button" class="toast-close" aria-label="Закрыть уведомление">×</button>
+      `;
+      toastHostEl.prepend(toast);
+      while (toastHostEl.children.length > 5) {
+        toastHostEl.lastElementChild?.remove();
+      }
+
+      const closeButton = toast.querySelector('.toast-close');
+      let removed = false;
+      let hideTimer = 0;
+      const removeToast = () => {
+        if (removed) return;
+        removed = true;
+        if (hideTimer) {
+          window.clearTimeout(hideTimer);
+        }
+        toast.classList.remove('is-visible');
+        toast.classList.add('is-leaving');
+        window.setTimeout(() => toast.remove(), 220);
+      };
+      closeButton?.addEventListener('click', removeToast);
+      window.requestAnimationFrame(() => {
+        toast.classList.add('is-visible');
+      });
+      hideTimer = window.setTimeout(removeToast, ttlMs);
     }
 
     async function api(path, options = {}) {
