@@ -75,6 +75,17 @@
       return localDateTimeFormatter.format(dt);
     }
 
+    function fmtDuration(secondsValue) {
+      const safeSeconds = Math.max(0, Math.floor(Number(secondsValue) || 0));
+      const hoursTotal = Math.floor(safeSeconds / 3600);
+      const minutes = Math.floor((safeSeconds % 3600) / 60);
+      const seconds = safeSeconds % 60;
+      const hours = String(hoursTotal).padStart(2, '0');
+      const mins = String(minutes).padStart(2, '0');
+      const secs = String(seconds).padStart(2, '0');
+      return `${hours}:${mins}:${secs}`;
+    }
+
     function escapeHtml(value) {
       return String(value)
         .replace(/&/g, '&amp;')
@@ -552,6 +563,12 @@
           : '';
         const progressAlias = progressAliasRaw || 'подготовка данных категорий';
         const progressVisible = hasProgress && !run.remote_terminal && run.status === 'assigned';
+        const assignedDate = parseBackendDate(run.assigned_at);
+        const assignedStartMs = assignedDate ? assignedDate.getTime() : NaN;
+        const runtimeVisible = run.status === 'assigned' && !run.remote_terminal && Number.isFinite(assignedStartMs);
+        const runtimeLine = runtimeVisible
+          ? `<div class="run-runtime"><span class="run-runtime-live" data-runtime-start-ms="${Math.floor(assignedStartMs)}" data-runtime-done="${progressDone}" data-runtime-total="${progressTotal}"></span></div>`
+          : '';
         const progressText = progressVisible
           ? `<div class="run-progress-note">категория: <span class="mono">${escapeHtml(progressAlias)}</span></div>`
           : '';
@@ -583,6 +600,7 @@
           <div class="muted">orch: ${run.orchestrator_name || '—'}</div>
           <div class="muted">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
           <div class="muted">converter: ${Number(run.converter_elapsed_sec || 0)}s • finish: ${fmtDate(run.finish)}</div>
+          ${runtimeLine}
           ${progressBar}
           ${validationText}
           ${errorText}
@@ -591,6 +609,32 @@
         </article>
       `;
       }).join('');
+      updateRunRuntimeCounters();
+    }
+
+    function updateRunRuntimeCounters() {
+      const nowMs = Date.now();
+      const runtimeNodes = runListEl.querySelectorAll('.run-runtime-live[data-runtime-start-ms]');
+      runtimeNodes.forEach((node) => {
+        const startMs = Number(node.dataset.runtimeStartMs);
+        if (!Number.isFinite(startMs) || startMs <= 0) {
+          node.textContent = 'работает: — • осталось: —';
+          return;
+        }
+        const elapsedSec = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+        const total = Math.max(0, Math.floor(Number(node.dataset.runtimeTotal) || 0));
+        const done = Math.max(0, Math.floor(Number(node.dataset.runtimeDone) || 0));
+        const elapsedLabel = fmtDuration(elapsedSec);
+
+        if (total > 0 && done > 0 && elapsedSec > 0) {
+          const totalEstimateSec = Math.max(elapsedSec, Math.round((elapsedSec * total) / done));
+          const remainingSec = Math.max(0, totalEstimateSec - elapsedSec);
+          node.textContent = `работает: ${elapsedLabel} • осталось ~${fmtDuration(remainingSec)}`;
+          return;
+        }
+
+        node.textContent = `работает: ${elapsedLabel} • осталось: расчёт после старта`;
+      });
     }
 
     async function refreshAll() {
@@ -776,4 +820,5 @@
     });
 
     refreshAll();
+    window.setInterval(updateRunRuntimeCounters, 1000);
     window.setInterval(refreshAll, 15000);

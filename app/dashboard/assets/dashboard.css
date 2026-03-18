@@ -534,6 +534,19 @@ td input[type="checkbox"] {
   overflow-wrap: anywhere;
 }
 
+.run-runtime {
+  margin-top: 8px;
+  color: #bfd2f6;
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+.run-runtime-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .run-cancel {
   margin-top: 8px;
 }
