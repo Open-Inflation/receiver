@@ -393,6 +393,7 @@ async def _run_status_fail_marks_run_error_test(database_url: str) -> None:
         assert run.status == "error"
         assert "Status request failed" in str(run.error_message)
         assert isinstance(run.dispatch_meta_json, dict)
+        assert run.dispatch_meta_json.get("remote_status") == "unknown"
         assert run.dispatch_meta_json.get("last_status_error") == "status timeout"
         assert run.dispatch_meta_json.get("failed_at")
     finally:

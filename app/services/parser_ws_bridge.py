@@ -332,6 +332,7 @@ class ParserWsBridge:
                     orchestrator=orchestrator,
                     error_message=f"Status request failed: {error_text}",
                     meta_patch={
+                        "remote_status": "unknown",
                         "last_status_error": error_text,
                         "last_status_error_at": utcnow().isoformat(),
                     },
@@ -353,6 +354,7 @@ class ParserWsBridge:
                     orchestrator=orchestrator,
                     error_message="Orchestrator status payload missing job object",
                     meta_patch={
+                        "remote_status": "unknown",
                         "last_status_error": "status response without job payload",
                         "last_status_error_at": utcnow().isoformat(),
                     },
