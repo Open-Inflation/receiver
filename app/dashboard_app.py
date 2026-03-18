@@ -25,6 +25,7 @@ from app.logging_utils import ensure_logging_configured
 from app.models import Base
 
 LOGGER = logging.getLogger(__name__)
+ORCHESTRATOR_WS_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 
 async def _connect_orchestrator_ws(ws_url: str) -> Any:
@@ -32,7 +33,10 @@ async def _connect_orchestrator_ws(ws_url: str) -> Any:
         import websockets
     except ModuleNotFoundError as exc:
         raise RuntimeError("Package 'websockets' is required for dashboard log proxy") from exc
-    return await websockets.connect(ws_url)
+    return await websockets.connect(
+        ws_url,
+        max_size=ORCHESTRATOR_WS_MAX_MESSAGE_BYTES,
+    )
 
 def _ensure_sqlite_parent_dir(database_url: str) -> None:
     ensure_sqlite_parent_dir(database_url)
