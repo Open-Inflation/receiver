@@ -194,19 +194,44 @@ input[type="checkbox"] {
   accent-color: var(--accent);
   cursor: pointer;
   margin: 0;
+  vertical-align: middle;
 }
 
 .bool-field {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   color: var(--text);
   font-size: 0.84rem;
+  width: max-content;
+  white-space: nowrap;
+}
+
+.task-create label > .bool-field {
+  margin-top: 2px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(146, 173, 247, 0.4);
+  background: rgba(11, 16, 30, 0.88);
+}
+
+.bool-field input[type="checkbox"] {
+  flex: 0 0 auto;
+}
+
+.bool-field > span {
+  line-height: 1;
 }
 
 .bool-inline {
   font-size: 0.78rem;
   color: var(--muted);
+  width: auto;
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 button {
