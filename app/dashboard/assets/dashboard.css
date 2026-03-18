@@ -445,6 +445,10 @@ td input[type="checkbox"] {
   border-color: rgba(255, 172, 94, 0.72);
   color: var(--accent-warm);
 }
+.chip.cancelled {
+  border-color: rgba(255, 172, 94, 0.72);
+  color: var(--accent-warm);
+}
 .chip.running,
 .chip.queued,
 .chip.waiting {
@@ -473,6 +477,10 @@ td input[type="checkbox"] {
   font: 500 0.76rem/1.35 ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.run-cancel {
+  margin-top: 8px;
 }
 
 .flash {

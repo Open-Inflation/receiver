@@ -231,6 +231,32 @@ class _FakeParserSocket:
         self.closed = True
 
 
+class _FakeCancelSocket:
+    def __init__(self) -> None:
+        self.closed = False
+        self.sent_payloads: list[str] = []
+        self._responses = [
+            json.dumps(
+                {
+                    "ok": True,
+                    "action": "cancel_job",
+                    "job_id": "job-321",
+                    "status": "cancelled",
+                }
+            )
+        ]
+
+    async def send(self, payload: str) -> None:
+        self.sent_payloads.append(payload)
+
+    async def recv(self) -> str:
+        assert self._responses, "No fake cancel payloads left"
+        return self._responses.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
     app = create_dashboard_app(_settings(tmp_path, ws_password="top-secret"))
     fake_socket = _FakeParserSocket()
@@ -305,6 +331,122 @@ def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
     assert sent_payload["job_id"] == "job-123"
     assert sent_payload["tail_lines"] == 2
     assert sent_payload["password"] == "top-secret"
+
+
+def test_dashboard_cancel_run_marks_local_status_and_overview(tmp_path: Path, monkeypatch):
+    app = create_dashboard_app(_settings(tmp_path, ws_password="top-secret"))
+    fake_socket = _FakeCancelSocket()
+
+    async def _fake_connect_orchestrator_ws(url: str):
+        assert url == "ws://127.0.0.1:8765"
+        return fake_socket
+
+    monkeypatch.setattr("app.dashboard_app._connect_orchestrator_ws", _fake_connect_orchestrator_ws)
+
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        task = CrawlTask(
+            city="Moscow",
+            store="C880",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        orchestrator = Orchestrator(
+            id="q" * 32,
+            name="parser-ws-cancel",
+            token="s" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        session.add(task)
+        session.add(orchestrator)
+        session.commit()
+        session.refresh(task)
+
+        run = TaskRun(
+            id="m" * 32,
+            task_id=task.id,
+            orchestrator_id=orchestrator.id,
+            status="assigned",
+            assigned_at=now,
+            dispatch_meta_json={"remote_job_id": "job-321", "remote_status": "running"},
+        )
+        session.add(run)
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        cancel = client.post("/api/runs/" + ("m" * 32) + "/cancel")
+        assert cancel.status_code == 200
+        cancel_body = cancel.json()
+        assert cancel_body["ok"] is True
+        assert cancel_body["status"] == "cancelled"
+
+        overview = client.get("/api/overview")
+        assert overview.status_code == 200
+        recent = overview.json()["recent_runs"][0]
+        assert recent["status"] == "error"
+        assert recent["display_status"] == "cancelled"
+        assert recent["remote_status"] == "cancelled"
+        assert recent["remote_terminal"] is True
+        assert recent["can_open_live_log"] is False
+        assert recent["error_message"] == "Cancelled from dashboard"
+
+    sent_payload = json.loads(fake_socket.sent_payloads[0])
+    assert sent_payload["action"] == "cancel_job"
+    assert sent_payload["job_id"] == "job-321"
+    assert sent_payload["password"] == "top-secret"
+    assert fake_socket.closed is True
+
+
+def test_dashboard_cancel_run_requires_remote_job_link(tmp_path: Path):
+    app = create_dashboard_app(_settings(tmp_path))
+    session = app.state.session_factory()
+    try:
+        now = utcnow()
+        task = CrawlTask(
+            city="Moscow",
+            store="C881",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        orchestrator = Orchestrator(
+            id="v" * 32,
+            name="parser-ws-cancel-no-link",
+            token="w" * 40,
+            created_at=now,
+            updated_at=now,
+            last_heartbeat_at=now,
+        )
+        run = TaskRun(
+            id="n" * 32,
+            task_id=1,
+            orchestrator_id=orchestrator.id,
+            status="assigned",
+            assigned_at=now,
+            dispatch_meta_json={},
+        )
+        session.add(task)
+        session.add(orchestrator)
+        session.flush()
+        run.task_id = task.id
+        session.add(run)
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        cancel = client.post("/api/runs/" + ("n" * 32) + "/cancel")
+        assert cancel.status_code == 409
 
 
 def test_dashboard_overview_remote_terminal_disables_live_log(tmp_path: Path):

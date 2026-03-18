@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import CrawlTask, Orchestrator, TaskRun
+from app.services.scheduler import TERMINAL_RUN_STATUSES, finish_run
 from app.services.scheduler import as_utc, is_task_due, utcnow
 
 from .schemas import TaskCreateIn, TaskUpdateIn
@@ -237,6 +238,127 @@ def create_dashboard_router(
             with contextlib.suppress(Exception):
                 await websocket.close()
 
+    @router.post("/api/runs/{run_id}/cancel")
+    async def cancel_run(run_id: str) -> dict[str, object]:
+        session = session_factory()
+        try:
+            run = session.get(TaskRun, run_id)
+            if run is None:
+                LOGGER.warning("Run cancel failed: run_id=%s reason=run_not_found", run_id)
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+
+            if str(run.status).strip().lower() in TERMINAL_RUN_STATUSES:
+                return {
+                    "ok": True,
+                    "run_id": run_id,
+                    "status": "already_terminal",
+                    "run_status": str(run.status),
+                }
+
+            run_meta = dispatch_meta(run.dispatch_meta_json)
+            remote_job_id = run_meta.get("remote_job_id")
+            if not isinstance(remote_job_id, str) or not remote_job_id.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Run is not linked to orchestrator WS job",
+                )
+            remote_job_id = remote_job_id.strip()
+            orchestrator_id = run.orchestrator_id
+        finally:
+            session.close()
+
+        parser_socket: Any | None = None
+        cancel_response: dict[str, Any]
+        try:
+            connector = connect_orchestrator_ws_getter()
+            parser_socket = await connector(app_settings.orchestrator_ws_url)
+            request_payload: dict[str, Any] = {
+                "action": "cancel_job",
+                "job_id": remote_job_id,
+            }
+            if app_settings.orchestrator_ws_password is not None:
+                request_payload["password"] = app_settings.orchestrator_ws_password
+            await parser_socket.send(json.dumps(request_payload, ensure_ascii=False))
+
+            raw_payload = await parser_socket.recv()
+            raw_text = (
+                raw_payload.decode("utf-8", errors="replace")
+                if isinstance(raw_payload, (bytes, bytearray))
+                else str(raw_payload)
+            )
+            parsed_payload = json.loads(raw_text)
+            if not isinstance(parsed_payload, dict):
+                raise RuntimeError("Orchestrator returned unexpected payload format")
+            cancel_response = parsed_payload
+        except HTTPException:
+            raise
+        except Exception as exc:
+            LOGGER.exception("Run cancel request failed: run_id=%s error=%s", run_id, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Cancel request failed: {exc}",
+            ) from exc
+        finally:
+            if parser_socket is not None:
+                with contextlib.suppress(Exception):
+                    await parser_socket.close()
+
+        if cancel_response.get("ok") is not True:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(cancel_response.get("error", "Orchestrator cancel failed")),
+            )
+
+        session = session_factory()
+        try:
+            run = session.get(TaskRun, run_id)
+            if run is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+            orchestrator = session.get(Orchestrator, orchestrator_id)
+            if orchestrator is None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Run orchestrator not found")
+
+            run_meta = dict(dispatch_meta(run.dispatch_meta_json))
+            remote_status = str(cancel_response.get("status", "cancelled")).strip().lower() or "cancelled"
+            run_meta.update(
+                {
+                    "remote_status": remote_status,
+                    "cancelled_at": utcnow().isoformat(),
+                    "cancel_request": {"action": "cancel_job", "job_id": remote_job_id},
+                    "cancel_response": cancel_response,
+                }
+            )
+            run.dispatch_meta_json = run_meta
+
+            if (
+                remote_status == "cancelled"
+                and str(run.status).strip().lower() not in TERMINAL_RUN_STATUSES
+            ):
+                finish_run(
+                    session,
+                    run=run,
+                    orchestrator=orchestrator,
+                    status="error",
+                    processed_images=int(run.processed_images or 0),
+                    error_message="Cancelled from dashboard",
+                )
+            else:
+                session.commit()
+
+            LOGGER.info(
+                "Run cancelled from dashboard: run_id=%s remote_job_id=%s",
+                run_id,
+                remote_job_id,
+            )
+            return {
+                "ok": True,
+                "run_id": run_id,
+                "remote_job_id": remote_job_id,
+                "status": remote_status,
+            }
+        finally:
+            session.close()
+
     @router.get("/api/overview")
     def overview() -> dict[str, object]:
         session = session_factory()
@@ -318,12 +440,17 @@ def create_dashboard_router(
             ) in recent_rows:
                 run_meta = dispatch_meta(run_dispatch_meta)
                 remote_status = str(run_meta.get("remote_status", "")).strip().lower() or None
-                remote_terminal = remote_status in {"success", "error"}
+                remote_terminal = remote_status in {"success", "error", "cancelled"}
                 remote_job_id = run_meta.get("remote_job_id")
                 has_remote_job_id = isinstance(remote_job_id, str) and bool(remote_job_id.strip())
                 local_terminal = str(run_status).strip().lower() in {"success", "error"}
                 validation_failed = bool(run_status == "success" and dataclass_validated is False)
-                display_status = "validation_failed" if validation_failed else str(run_status)
+                if validation_failed:
+                    display_status = "validation_failed"
+                elif str(run_status).strip().lower() == "error" and remote_status == "cancelled":
+                    display_status = "cancelled"
+                else:
+                    display_status = str(run_status)
                 recent_runs.append(
                     {
                         "id": run_id,

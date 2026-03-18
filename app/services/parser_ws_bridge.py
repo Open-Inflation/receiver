@@ -376,7 +376,7 @@ class ParserWsBridge:
                 },
             )
 
-            if remote_status not in {"success", "error"}:
+            if remote_status not in {"success", "error", "cancelled"}:
                 LOGGER.debug(
                     "Run still in progress: run_id=%s remote_job_id=%s status=%s",
                     run.id,
@@ -401,6 +401,8 @@ class ParserWsBridge:
                     error_message = self._safe_str(job_payload.get("traceback"))
                 if remote_status == "error" and not error_message:
                     error_message = "Orchestrator returned error status"
+                if remote_status == "cancelled" and not error_message:
+                    error_message = "Cancelled by operator"
 
                 if remote_status == "success":
                     ingest_result = self._artifact_ingestor.ingest_run_output(
@@ -415,11 +417,12 @@ class ParserWsBridge:
                     if not ingest_result.get("ok"):
                         raise RuntimeError(str(ingest_result.get("error", "artifact ingest failed")))
 
+                local_status = "success" if remote_status == "success" else "error"
                 finish_run(
                     session,
                     run=run,
                     orchestrator=orchestrator,
-                    status=remote_status,
+                    status=local_status,
                     processed_images=processed_images,
                     error_message=error_message,
                 )

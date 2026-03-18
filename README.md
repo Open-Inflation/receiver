@@ -126,6 +126,7 @@ python dashboard.py --host 127.0.0.1 --port 8091
 - `PATCH /api/tasks/{task_id}` - обновить задачу
 - `GET /api/validation-errors` - список актуальных ошибок dataclass validation (dashboard; по последнему успешному run каждой задачи)
 - `GET /api/runs/{run_id}` - получить run
+- `POST /api/runs/{run_id}/cancel` - остановить активный run из dashboard (проксируется в parser `cancel_job`)
 - `GET /healthz` - healthcheck
 
 ## Формат отправки результата

@@ -840,3 +840,92 @@ async def _run_backlog_guard_skips_claim_test(database_url: str) -> None:
 def test_backlog_guard_skips_claim(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'bridge-backlog-guard.sqlite3'}"
     asyncio.run(_run_backlog_guard_skips_claim_test(db_url))
+
+
+async def _run_remote_cancelled_status_marks_run_error_test(database_url: str) -> None:
+    engine = create_sqlalchemy_engine(database_url)
+    session_factory = create_session_factory(engine)
+    Base.metadata.create_all(bind=engine)
+
+    session = session_factory()
+    try:
+        task = CrawlTask(
+            city="3",
+            store="C050",
+            frequency_hours=24,
+            parser_name="fixprice",
+            is_active=True,
+            created_at=utcnow(),
+            updated_at=utcnow(),
+        )
+        session.add(task)
+        session.commit()
+    finally:
+        session.close()
+
+    bridge = ParserWsBridge(
+        session_factory=session_factory,
+        parser_bridge=DummyParserBridge(),
+        image_pipeline=DummyImagePipeline(),
+        artifact_ingestor=DummyArtifactIngestor(),
+        lease_ttl_minutes=30,
+        ws_url="ws://127.0.0.1:8765",
+        ws_password=None,
+        poll_interval_sec=0.2,
+        manager_name="parser-ws-cancelled-status",
+        submit_include_images=True,
+        submit_full_catalog=True,
+        upload_archive_images=True,
+        max_claims_per_cycle=1,
+    )
+
+    responses = [
+        {"ok": True, "action": "pong"},
+        {"ok": True, "action": "submit_store", "job_id": "job-050", "status": "queued"},
+        {"ok": True, "action": "pong"},
+        {
+            "ok": True,
+            "action": "status",
+            "job": {
+                "job_id": "job-050",
+                "status": "cancelled",
+                "message": "Cancelled by API request",
+            },
+        },
+    ]
+
+    async def fake_ws_request(payload):
+        assert responses, f"Unexpected ws request: {payload}"
+        return responses.pop(0)
+
+    bridge._ws_request = fake_ws_request  # type: ignore[method-assign]
+    await bridge.run_cycle()
+
+    pause_session = session_factory()
+    try:
+        task = pause_session.scalar(select(CrawlTask).where(CrawlTask.store == "C050"))
+        assert task is not None
+        task.is_active = False
+        task.updated_at = utcnow()
+        pause_session.commit()
+    finally:
+        pause_session.close()
+
+    await bridge.run_cycle()
+
+    check_session = session_factory()
+    try:
+        run = check_session.scalar(select(TaskRun).order_by(TaskRun.assigned_at.desc()))
+        assert run is not None
+        assert run.status == "error"
+        assert run.error_message == "Cancelled by API request"
+        assert isinstance(run.dispatch_meta_json, dict)
+        assert run.dispatch_meta_json.get("remote_status") == "cancelled"
+    finally:
+        check_session.close()
+        engine.dispose()
+
+
+def test_remote_cancelled_status_marks_run_error(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'bridge-cancelled-status.sqlite3'}"
+    asyncio.run(_run_remote_cancelled_status_marks_run_error_test(db_url))

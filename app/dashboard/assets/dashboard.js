@@ -508,6 +508,7 @@
         const localChipClass = localStatus === 'validation_failed' ? 'warning' : localStatus;
         const isDone = run.status === 'success' || run.status === 'error';
         const canOpenLiveLog = !!run.can_open_live_log;
+        const canCancel = !!(run.status === 'assigned' && !run.remote_terminal && run.can_open_live_log);
         const remoteStatus = typeof run.remote_status === 'string' && run.remote_status
           ? run.remote_status
           : 'unknown';
@@ -530,6 +531,9 @@
         const errorText = errorMessage
           ? `<div class="run-error">${escapeHtml(errorMessage)}</div>`
           : '';
+        const cancelButton = canCancel
+          ? `<button type="button" class="danger run-cancel" data-action="cancel-run" data-run-id="${run.id}">Остановить</button>`
+          : '';
         return `
         <article class="run ${canOpenLiveLog ? '' : 'done'}"${attrs}>
           <div class="row-top">
@@ -545,6 +549,7 @@
           <div class="muted">converter: ${Number(run.converter_elapsed_sec || 0)}s • finish: ${fmtDate(run.finish)}</div>
           ${validationText}
           ${errorText}
+          ${cancelButton}
           <div class="muted">${liveLogText}</div>
         </article>
       `;
@@ -642,7 +647,25 @@
       }
     }
 
+    async function cancelRun(runId) {
+      try {
+        await api(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
+        flash(`Run ${runId.slice(0, 12)} остановлен`);
+        await refreshAll();
+      } catch (err) {
+        flash(`Ошибка остановки run: ${err.message}`, true);
+      }
+    }
+
     function onRunAction(event) {
+      const cancelButton = event.target.closest('button[data-action="cancel-run"]');
+      if (cancelButton) {
+        const runId = cancelButton.dataset.runId;
+        if (runId) {
+          void cancelRun(runId);
+        }
+        return;
+      }
       const card = event.target.closest('article.run[data-run-id]');
       if (!card) return;
       openRunLog(card.dataset.runId);
@@ -650,6 +673,7 @@
 
     function onRunKeydown(event) {
       if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target instanceof Element && event.target.closest('button')) return;
       const card = event.target.closest('article.run[data-run-id]');
       if (!card) return;
       event.preventDefault();
