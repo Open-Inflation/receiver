@@ -550,7 +550,6 @@ def test_dashboard_force_run_submits_and_creates_assigned_run(tmp_path: Path, mo
     assert sent_payload["action"] == "submit_store"
     assert sent_payload["store_code"] == "C991"
     assert sent_payload["parser"] == "chizhik"
-    assert sent_payload["city_id"] == "Moscow"
     assert sent_payload["include_images"] is False
     assert sent_payload["use_product_info"] is False
     assert sent_payload["full_catalog"] is True

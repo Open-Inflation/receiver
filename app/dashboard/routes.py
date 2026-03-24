@@ -349,8 +349,6 @@ def create_dashboard_router(
         }
         if payload.country_id is not None:
             request_payload["country_id"] = int(payload.country_id)
-        if payload.city_id is not None:
-            request_payload["city_id"] = payload.city_id
         if payload.api_timeout_ms is not None:
             request_payload["api_timeout_ms"] = float(payload.api_timeout_ms)
         if payload.strict_validation is not None:
@@ -609,12 +607,6 @@ def create_dashboard_router(
                 "use_product_info": bool(task.use_product_info),
                 "full_catalog": bool(app_settings.orchestrator_submit_full_catalog),
             }
-            city_token = task.city.strip()
-            if city_token:
-                try:
-                    request_payload["city_id"] = int(city_token)
-                except ValueError:
-                    request_payload["city_id"] = city_token
             run_id = run.id
             orchestrator_id = orchestrator.id
         finally:

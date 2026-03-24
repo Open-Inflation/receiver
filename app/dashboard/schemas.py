@@ -32,6 +32,5 @@ class StoreDirectorySyncIn(BaseModel):
 
     parser_name: str = Field(min_length=1, max_length=64)
     country_id: int | None = None
-    city_id: int | str | None = None
     api_timeout_ms: float | None = None
     strict_validation: bool | None = None

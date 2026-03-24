@@ -45,7 +45,6 @@ def test_task_lifecycle_success(client):
             "run_id": run_id,
             "status": "success",
             "payload": {
-                "city_id": "3",
                 "action": "ping",
             },
         },

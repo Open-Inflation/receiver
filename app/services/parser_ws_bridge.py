@@ -488,12 +488,6 @@ class ParserWsBridge:
             "use_product_info": self._resolve_task_use_product_info(task),
             "full_catalog": self._submit_full_catalog,
         }
-        city_token = task.city.strip()
-        if city_token:
-            try:
-                payload["city_id"] = int(city_token)
-            except ValueError:
-                payload["city_id"] = city_token
 
         response = await self._ws_request(payload)
         sanitized_request = dict(payload)
