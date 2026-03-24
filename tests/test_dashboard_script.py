@@ -302,6 +302,23 @@ class _FakeStoreDirectorySyncSocket:
         self.closed = True
 
 
+class _FakeRawStoreDirectorySyncSocket:
+    def __init__(self, raw_payload: str) -> None:
+        self.closed = False
+        self.sent_payloads: list[str] = []
+        self._responses = [raw_payload]
+
+    async def send(self, payload: str) -> None:
+        self.sent_payloads.append(payload)
+
+    async def recv(self) -> str:
+        assert self._responses, "No fake store-directory payloads left"
+        return self._responses.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 def test_dashboard_run_log_proxy_ws(tmp_path: Path, monkeypatch):
     app = create_dashboard_app(_settings(tmp_path, ws_password="top-secret"))
     fake_socket = _FakeParserSocket()
@@ -783,6 +800,26 @@ def test_dashboard_store_directory_sync_empty_snapshot_keeps_active(tmp_path: Pa
         session.close()
 
 
+def test_dashboard_store_directory_sync_reports_invalid_json(tmp_path: Path, monkeypatch):
+    app = create_dashboard_app(_settings(tmp_path))
+    fake_socket = _FakeRawStoreDirectorySyncSocket("")
+
+    async def _fake_connect_orchestrator_ws(url: str):
+        assert url == "ws://127.0.0.1:8765"
+        return fake_socket
+
+    monkeypatch.setattr("app.dashboard_app._connect_orchestrator_ws", _fake_connect_orchestrator_ws)
+
+    with TestClient(app) as client:
+        sync_resp = client.post(
+            "/api/store-directory/sync",
+            json={"parser_name": "chizhik"},
+        )
+        assert sync_resp.status_code == 502
+        assert "empty payload" in sync_resp.json()["detail"].lower()
+        assert fake_socket.closed is True
+
+
 def test_dashboard_store_directory_sync_keeps_partial_chizhik_rows(tmp_path: Path, monkeypatch):
     app = create_dashboard_app(_settings(tmp_path))
     fake_socket = _FakeStoreDirectorySyncSocket(
@@ -793,7 +830,7 @@ def test_dashboard_store_directory_sync_keeps_partial_chizhik_rows(tmp_path: Pat
             "stores_count": 1,
             "stores": [
                 {
-                    "code": "moskva",
+                    "code": "HAOJ",
                     "address": None,
                     "longitude": 37.62,
                     "latitude": 55.75,
@@ -803,7 +840,7 @@ def test_dashboard_store_directory_sync_keeps_partial_chizhik_rows(tmp_path: Pat
                     },
                 }
             ],
-            "warnings": ["partial virtual stores"],
+            "warnings": ["partial stores"],
         }
     )
 
@@ -827,7 +864,7 @@ def test_dashboard_store_directory_sync_keeps_partial_chizhik_rows(tmp_path: Pat
         assert rows.status_code == 200
         listed = rows.json()
         assert len(listed) == 1
-        assert listed[0]["store_code"] == "moskva"
+        assert listed[0]["store_code"] == "HAOJ"
         assert listed[0]["is_partial"] is True
 
 
@@ -861,7 +898,7 @@ def test_dashboard_store_directory_list_filters_parser_and_active_flag(tmp_path:
                 ),
                 ParserStoreDirectory(
                     parser_name="chizhik",
-                    store_code="moskva",
+                    store_code="HAOJ",
                     city_name="Москва",
                     is_active=True,
                     is_partial=True,
@@ -891,7 +928,7 @@ def test_dashboard_store_directory_list_filters_parser_and_active_flag(tmp_path:
         assert chizhik_active.status_code == 200
         listed = chizhik_active.json()
         assert len(listed) == 1
-        assert listed[0]["store_code"] == "moskva"
+        assert listed[0]["store_code"] == "HAOJ"
 
 
 def test_dashboard_overview_remote_terminal_disables_live_log(tmp_path: Path):

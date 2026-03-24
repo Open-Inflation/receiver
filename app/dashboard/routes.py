@@ -64,6 +64,13 @@ def _safe_schedule_value(value: Any) -> str | None:
     return token[:16]
 
 
+def _payload_preview(value: str, *, limit: int = 240) -> str:
+    normalized = value.replace("\r", "\\r").replace("\n", "\\n")
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
+
+
 def _store_directory_to_dict(row: ParserStoreDirectory) -> dict[str, object]:
     return {
         "id": int(row.id),
@@ -186,7 +193,26 @@ def create_dashboard_router(
                 if isinstance(raw_payload, (bytes, bytearray))
                 else str(raw_payload)
             )
-            parsed_payload = json.loads(raw_text)
+            if not raw_text.strip():
+                LOGGER.error(
+                    "Dashboard orchestrator WS returned empty payload: action=%s parser=%s",
+                    payload.get("action"),
+                    payload.get("parser"),
+                )
+                raise RuntimeError("Orchestrator returned empty payload")
+            try:
+                parsed_payload = json.loads(raw_text)
+            except json.JSONDecodeError as exc:
+                LOGGER.error(
+                    "Dashboard orchestrator WS returned invalid JSON: action=%s parser=%s error=%s raw=%s",
+                    payload.get("action"),
+                    payload.get("parser"),
+                    exc,
+                    _payload_preview(raw_text),
+                )
+                raise RuntimeError(
+                    f"Orchestrator returned invalid JSON: {exc}"
+                ) from exc
             if not isinstance(parsed_payload, dict):
                 raise RuntimeError("Orchestrator returned unexpected payload format")
             return parsed_payload
