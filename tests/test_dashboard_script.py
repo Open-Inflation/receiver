@@ -33,6 +33,7 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
         assert "Receiver Control Room" in page.text
         assert "Картинки" in page.text
         assert "Компактный режим" in page.text
+        assert "Город" not in page.text
         validation_page = client.get("/validation-errors")
         assert validation_page.status_code == 200
         assert "Validation Fix Queue" in validation_page.text
@@ -40,7 +41,6 @@ def test_dashboard_crud_and_overview(tmp_path: Path):
         create = client.post(
             "/api/tasks",
             json={
-                "city": "Moscow",
                 "store": "C500",
                 "frequency_hours": 24,
                 "parser_name": "fixprice",

@@ -228,7 +228,7 @@ def create_dashboard_router(
                 else payload.use_product_info
             )
             task = CrawlTask(
-                city=payload.city.strip(),
+                city="",
                 store=payload.store.strip(),
                 frequency_hours=payload.frequency_hours,
                 parser_name=payload.parser_name.strip(),
@@ -242,9 +242,8 @@ def create_dashboard_router(
             session.commit()
             session.refresh(task)
             LOGGER.info(
-                "Dashboard task created: id=%s city=%s store=%s parser=%s include_images=%s use_product_info=%s active=%s",
+                "Dashboard task created: id=%s store=%s parser=%s include_images=%s use_product_info=%s active=%s",
                 task.id,
-                task.city,
                 task.store,
                 task.parser_name,
                 task.include_images,

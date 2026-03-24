@@ -169,24 +169,10 @@
       return Number.isFinite(lat) && Number.isFinite(lon);
     }
 
-    function isDigitsOnly(value) {
-      return /^\d+$/.test(String(value || '').trim());
-    }
-
     function storeDirectoryCityDisplay(row) {
       const cityName = String(row?.city_name || '').trim();
       const cityAlias = String(row?.city_alias || '').trim();
       return cityName || cityAlias || '';
-    }
-
-    function storeDirectoryTaskCityValue(row) {
-      const parserName = normalizeParserName(row?.parser_name);
-      const cityAlias = String(row?.city_alias || '').trim();
-      const cityName = String(row?.city_name || '').trim();
-      if (parserName === 'fixprice' && isDigitsOnly(cityAlias)) {
-        return cityAlias;
-      }
-      return cityAlias || cityName || '';
     }
 
     function storeDirectoryDisplayTitle(row) {
@@ -254,13 +240,9 @@
     function applyStoreSelection(row) {
       if (!createFormEl || !row) return;
       const parserName = normalizeParserName(row.parser_name || storeMapParserEl?.value);
-      const cityValue = String(storeDirectoryTaskCityValue(row) || row.address || '').trim();
       const storeCode = String(row.store_code || '').trim();
       if (storeCode) {
         createFormEl.store.value = storeCode;
-      }
-      if (cityValue) {
-        createFormEl.city.value = cityValue;
       }
       createFormEl.parser_name.value = parserName;
       flash(`Выбран магазин ${storeCode || '—'} (${parserName})`);
@@ -820,7 +802,6 @@
         return `
           <tr data-id="${task.id}">
             <td class="mono">${task.id}</td>
-            <td><input data-field="city" value="${task.city}" /></td>
             <td><input data-field="store" value="${task.store}" /></td>
             <td><input data-field="parser_name" value="${task.parser_name}" /></td>
             <td>
@@ -956,7 +937,7 @@
               <span class="chip remote-chip ${remoteStatus}">remote:${remoteStatus}</span>
             </div>
           </div>
-          <div class="muted">task #${run.task_id} • ${run.city || '—'} / ${run.store || '—'}</div>
+          <div class="muted">task #${run.task_id} • ${run.store || '—'}</div>
           <div class="muted">orch: ${run.orchestrator_name || '—'}</div>
           <div class="muted">images: ${run.processed_images} • start: ${fmtDate(run.assigned_at)}</div>
           <div class="muted">converter: ${Number(run.converter_elapsed_sec || 0)}s • finish: ${fmtDate(run.finish)}</div>
@@ -1015,7 +996,6 @@
       event.preventDefault();
       const form = event.currentTarget;
       const payload = {
-        city: form.city.value.trim(),
         store: form.store.value.trim(),
         frequency_hours: Number(form.frequency_hours.value),
         parser_name: form.parser_name.value.trim() || 'fixprice',
@@ -1023,7 +1003,7 @@
         use_product_info: !!form.use_product_info.checked,
         is_active: !!form.is_active.checked,
       };
-      if (!payload.city || !payload.store || !payload.frequency_hours) {
+      if (!payload.store || !payload.frequency_hours) {
         flash('Заполните обязательные поля', true);
         return;
       }
@@ -1078,7 +1058,6 @@
       if (button.dataset.action === 'save') {
         const getValue = (field) => row.querySelector(`[data-field="${field}"]`);
         const payload = {
-          city: getValue('city').value.trim(),
           store: getValue('store').value.trim(),
           parser_name: getValue('parser_name').value.trim() || 'fixprice',
           include_images: !!getValue('include_images').checked,
