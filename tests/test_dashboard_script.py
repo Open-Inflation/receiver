@@ -635,6 +635,9 @@ def test_dashboard_store_directory_sync_upserts_and_deactivates(tmp_path: Path, 
                 {
                     "code": "C001",
                     "address": "Москва, Тестовая 1",
+                    "rating": 3.4,
+                    "reviews_count": 17,
+                    "open_date": "2022-03-28",
                     "longitude": 37.62,
                     "latitude": 55.75,
                     "administrative_unit": {
@@ -727,6 +730,9 @@ def test_dashboard_store_directory_sync_upserts_and_deactivates(tmp_path: Path, 
         rows_by_code = {item["store_code"]: item for item in all_rows.json()}
         assert rows_by_code["COLD"]["is_active"] is False
         assert rows_by_code["C001"]["city_alias"] == "moskva"
+        assert rows_by_code["C001"]["rating"] == 3.4
+        assert rows_by_code["C001"]["reviews_count"] == 17
+        assert rows_by_code["C001"]["open_date"] == "2022-03-28"
 
     sent_payload = json.loads(fake_socket.sent_payloads[0])
     assert sent_payload["action"] == "collect_stores"

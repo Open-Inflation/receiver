@@ -141,6 +141,9 @@ class ParserStoreDirectory(Base):
     schedule_sunday_closed_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     temporarily_closed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    rating: Mapped[float | None] = mapped_column(Numeric(4, 2).with_variant(Float(), "sqlite"), nullable=True)
+    reviews_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    open_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
     longitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
     latitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
 
@@ -243,6 +246,9 @@ class RunArtifact(Base):
     schedule_sunday_closed_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     temporarily_closed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    rating: Mapped[float | None] = mapped_column(Numeric(4, 2).with_variant(Float(), "sqlite"), nullable=True)
+    reviews_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    open_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
     longitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
     latitude: Mapped[float | None] = mapped_column(_coord_numeric(), nullable=True)
 

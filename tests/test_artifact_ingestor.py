@@ -56,6 +56,9 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
         "schedule_saturday": {"open_from": "10:00", "closed_from": "21:00"},
         "schedule_sunday": {"open_from": "11:00", "closed_from": "20:00"},
         "temporarily_closed": False,
+        "rating": 3.4,
+        "reviews_count": 17,
+        "open_date": "2022-03-28",
         "longitude": 37.62,
         "latitude": 55.75,
         "administrative_unit": {
@@ -190,6 +193,9 @@ def test_success_result_ingests_json_to_normalized_tables(client, tmp_path):
         assert artifact.source == "output_json"
         assert artifact.parser_name == "fixprice"
         assert artifact.code == "C001"
+        assert float(artifact.rating) == 3.4
+        assert artifact.reviews_count == 17
+        assert artifact.open_date == "2022-03-28"
 
         product = session.scalar(
             select(RunArtifactProduct).where(RunArtifactProduct.artifact_id == artifact.id)

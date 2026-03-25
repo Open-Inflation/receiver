@@ -117,6 +117,8 @@ def ensure_task_runs_runtime_columns(engine) -> None:
     dialect = engine.dialect.name
     executed_task_runs = 0
     executed_crawl_tasks = 0
+    executed_store_directory = 0
+    executed_run_artifacts = 0
 
     with engine.begin() as connection:
         if inspector.has_table("task_runs"):
@@ -177,7 +179,63 @@ def ensure_task_runs_runtime_columns(engine) -> None:
                 text(f"UPDATE crawl_tasks SET use_product_info = COALESCE(use_product_info, {bool_default})")
             )
 
+        if inspector.has_table("parser_store_directory"):
+            existing_store_directory_columns = {
+                str(item.get("name")) for item in inspector.get_columns("parser_store_directory")
+            }
+            if dialect == "postgresql":
+                store_directory_ddl = {
+                    "rating": "ALTER TABLE parser_store_directory ADD COLUMN rating NUMERIC(4, 2)",
+                    "reviews_count": "ALTER TABLE parser_store_directory ADD COLUMN reviews_count INTEGER",
+                    "open_date": "ALTER TABLE parser_store_directory ADD COLUMN open_date VARCHAR(32)",
+                }
+            else:
+                store_directory_ddl = {
+                    "rating": "ALTER TABLE parser_store_directory ADD COLUMN rating REAL",
+                    "reviews_count": "ALTER TABLE parser_store_directory ADD COLUMN reviews_count INTEGER",
+                    "open_date": "ALTER TABLE parser_store_directory ADD COLUMN open_date TEXT",
+                }
+
+            for column_name, statement in store_directory_ddl.items():
+                if column_name in existing_store_directory_columns:
+                    continue
+                connection.execute(text(statement))
+                executed_store_directory += 1
+
+        if inspector.has_table("run_artifacts"):
+            existing_run_artifact_columns = {
+                str(item.get("name")) for item in inspector.get_columns("run_artifacts")
+            }
+            if dialect == "postgresql":
+                run_artifacts_ddl = {
+                    "rating": "ALTER TABLE run_artifacts ADD COLUMN rating NUMERIC(4, 2)",
+                    "reviews_count": "ALTER TABLE run_artifacts ADD COLUMN reviews_count INTEGER",
+                    "open_date": "ALTER TABLE run_artifacts ADD COLUMN open_date VARCHAR(32)",
+                }
+            else:
+                run_artifacts_ddl = {
+                    "rating": "ALTER TABLE run_artifacts ADD COLUMN rating REAL",
+                    "reviews_count": "ALTER TABLE run_artifacts ADD COLUMN reviews_count INTEGER",
+                    "open_date": "ALTER TABLE run_artifacts ADD COLUMN open_date TEXT",
+                }
+
+            for column_name, statement in run_artifacts_ddl.items():
+                if column_name in existing_run_artifact_columns:
+                    continue
+                connection.execute(text(statement))
+                executed_run_artifacts += 1
+
     if executed_task_runs:
         LOGGER.info("Receiver runtime schema reconciled for task_runs: added_columns=%s", executed_task_runs)
     if executed_crawl_tasks:
         LOGGER.info("Receiver runtime schema reconciled for crawl_tasks: added_columns=%s", executed_crawl_tasks)
+    if executed_store_directory:
+        LOGGER.info(
+            "Receiver runtime schema reconciled for parser_store_directory: added_columns=%s",
+            executed_store_directory,
+        )
+    if executed_run_artifacts:
+        LOGGER.info(
+            "Receiver runtime schema reconciled for run_artifacts: added_columns=%s",
+            executed_run_artifacts,
+        )

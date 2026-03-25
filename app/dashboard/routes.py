@@ -89,6 +89,9 @@ def _store_directory_to_dict(row: ParserStoreDirectory) -> dict[str, object]:
         "schedule_sunday_open_from": row.schedule_sunday_open_from,
         "schedule_sunday_closed_from": row.schedule_sunday_closed_from,
         "temporarily_closed": row.temporarily_closed,
+        "rating": row.rating,
+        "reviews_count": row.reviews_count,
+        "open_date": row.open_date,
         "longitude": row.longitude,
         "latitude": row.latitude,
         "is_partial": bool(row.is_partial),
@@ -162,6 +165,14 @@ def _normalize_store_directory_payload(
             if isinstance(raw_store.get("temporarily_closed"), bool)
             else None
         ),
+        "rating": _safe_float(raw_store.get("rating")),
+        "reviews_count": (
+            int(raw_store.get("reviews_count"))
+            if isinstance(raw_store.get("reviews_count"), int)
+            and not isinstance(raw_store.get("reviews_count"), bool)
+            else None
+        ),
+        "open_date": _safe_non_empty_str(raw_store.get("open_date")),
         "longitude": longitude,
         "latitude": latitude,
         "payload_json": payload,
@@ -507,6 +518,9 @@ def create_dashboard_router(
                     row.schedule_sunday_open_from = item.get("schedule_sunday_open_from")
                     row.schedule_sunday_closed_from = item.get("schedule_sunday_closed_from")
                     row.temporarily_closed = item.get("temporarily_closed")
+                    row.rating = item.get("rating")
+                    row.reviews_count = item.get("reviews_count")
+                    row.open_date = item.get("open_date")
                     row.longitude = item.get("longitude")
                     row.latitude = item.get("latitude")
                     row.payload_json = item.get("payload_json")
